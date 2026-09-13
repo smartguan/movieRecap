@@ -139,3 +139,47 @@ To prevent cross-movie hallucination and eliminate foreign film contamination:
 - SlopDetector evaluates the `Movie Identity & Anti-Contamination` dimension at 0 LLM tokens.
 - Immediate Tier F rejection upon detecting foreign film contamination, saving 100% of downstream semantic evaluation tokens.
 
+---
+
+## 8. Decoupled Queue Architecture (Detached Producer & Consumer)
+
+The Video Fetcher and Recap Generator can operate as independent, detached processes communicating asynchronously via `data/queue/`:
+
+```mermaid
+graph LR
+    subgraph Producer Process
+        URL[Movie URLs] --> Fetcher[fetch_movie.py]
+        Fetcher -->|Atomic Enqueue| Pending[data/queue/pending/]
+    end
+    
+    subgraph Consumer Daemon
+        Pending -->|Atomic Dequeue + Claim Lock| Worker[recap_worker.py]
+        Worker --> Proc[data/queue/processing/]
+        Proc -->|AI Recap Pipeline| Render[Render & QA]
+        Render --> Output[output/<slug>/]
+        Render --> Done[data/queue/completed/]
+    end
+```
+
+### 8.1 Producer Usage (`scripts/fetch_movie.py`)
+```bash
+# Fetch and queue a single movie
+python scripts/fetch_movie.py "https://www.yfsp.tv/play/MKQPsLuGSE5"
+
+# Fetch and queue batch list from file
+python scripts/fetch_movie.py urls.txt --target-duration 3.0
+```
+
+### 8.2 Consumer Daemon Usage (`scripts/recap_worker.py`)
+```bash
+# Continuous background daemon (polls every 5 seconds)
+python scripts/recap_worker.py --poll-interval 5.0
+
+# Single-pass batch run (processes all pending movies and exits)
+python scripts/recap_worker.py --once
+
+# Inspect queue status
+python scripts/recap_worker.py --status
+```
+
+

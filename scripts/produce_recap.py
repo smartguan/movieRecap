@@ -68,6 +68,11 @@ def main() -> int:
         action="store_true",
         help="Force re-download video stream even if movie is already cached in data/incoming/",
     )
+    parser.add_argument(
+        "--queue-only",
+        action="store_true",
+        help="Only fetch and enqueue into data/queue/pending/ without running recap pipeline immediately",
+    )
 
     args = parser.parse_args()
 
@@ -93,6 +98,23 @@ def main() -> int:
     print(f"   • Movie Title: {acq_result.movie_title}")
     print(f"   • Source Duration: {source_duration_min:.2f} minutes ({acq_result.duration_seconds:.1f}s)")
     print(f"   • Source Video: {acq_result.source_video_path}")
+
+    if args.queue_only:
+        from src.queue.manager import FolderQueueManager
+        qm = FolderQueueManager()
+        safe_slug = Path(acq_result.incoming_dir).name
+        meta_dict = {}
+        if Path(acq_result.metadata_path).exists():
+            meta_dict = json.loads(Path(acq_result.metadata_path).read_text(encoding="utf-8"))
+        p_path = qm.enqueue(
+            slug=safe_slug,
+            source_video_path=acq_result.source_video_path,
+            metadata=meta_dict,
+            custom_target_duration=args.target_duration,
+            duration_ratio=args.duration_ratio,
+        )
+        print(f"\n✅ Movie enqueued to {p_path} (--queue-only). Recap worker can process it asynchronously.")
+        return 0
 
     # Calculate dynamic target duration range
     if args.target_duration is not None:
