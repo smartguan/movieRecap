@@ -14,6 +14,8 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+from src.ai.script import clean_narration_text
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_VOICE = "zh-CN-YunxiNeural"  # Professional energetic documentary/commentary voice
@@ -46,6 +48,9 @@ def synthesize_segment(
         Duration of the generated audio in seconds.
     """
     output_file.parent.mkdir(parents=True, exist_ok=True)
+    text = clean_narration_text(text)
+    if not text:
+        text = "..."
 
     try:
         asyncio.run(_synthesize_text_async(text, voice, output_file))

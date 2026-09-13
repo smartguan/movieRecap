@@ -148,6 +148,46 @@ class LLMGateway:
         self._tasks[task.name] = task
         logger.debug("Registered semantic task: %s", task.name)
 
+    @staticmethod
+    def _parse_json(content: str) -> Any:
+        """
+        Robustly parse JSON from LLM output.
+        Handles markdown code blocks, stray text, and nested structures.
+        """
+        if not content:
+            return None
+        clean = content.strip()
+        # Strip markdown code fences if present
+        if clean.startswith("```"):
+            lines = clean.splitlines()
+            start_idx = 1
+            end_idx = len(lines)
+            if lines and lines[-1].strip() == "```":
+                end_idx = -1
+            clean = "\n".join(lines[start_idx:end_idx]).strip()
+
+        try:
+            return json.loads(clean)
+        except (json.JSONDecodeError, ValueError):
+            # Try to locate the outermost JSON object or array
+            first_brace = clean.find("{")
+            first_bracket = clean.find("[")
+            if first_brace != -1 and (first_bracket == -1 or first_brace < first_bracket):
+                last_brace = clean.rfind("}")
+                if last_brace > first_brace:
+                    try:
+                        return json.loads(clean[first_brace : last_brace + 1])
+                    except (json.JSONDecodeError, ValueError):
+                        pass
+            elif first_bracket != -1:
+                last_bracket = clean.rfind("]")
+                if last_bracket > first_bracket:
+                    try:
+                        return json.loads(clean[first_bracket : last_bracket + 1])
+                    except (json.JSONDecodeError, ValueError):
+                        pass
+            return None
+
     def invoke(
         self,
         task_name: str,
@@ -158,15 +198,15 @@ class LLMGateway:
         **kwargs: Any,
     ) -> GatewayResponse:
         """
-        Invoke an LLM through the gateway for a registered semantic task.
+        Invoke an LLM for a registered semantic task.
 
         Args:
-            task_name: Name of the registered task.
-            prompt: The prompt/instruction for the model.
-            context: Supporting context (scene data, transcript, etc.).
-            evidence_refs: List of evidence identifiers used in this call.
+            task_name: Must match a registered SemanticTask.name.
+            prompt: The specific instruction/prompt.
+            context: Supporting context (bounded, minimized).
+            evidence_refs: IDs of evidence supporting this call.
             project_id: Project ID for cost tracking.
-            **kwargs: Additional provider-specific parameters.
+            **kwargs: Extra parameters passed to the model provider.
 
         Returns:
             GatewayResponse with the model's output and telemetry.
@@ -198,8 +238,10 @@ class LLMGateway:
             cached = self._cache_get(cache_key)
             if cached is not None:
                 logger.info("Cache hit for task '%s'", task_name)
+                parsed = self._parse_json(cached)
                 return GatewayResponse(
                     content=cached,
+                    parsed=parsed,
                     cache_hit=True,
                     model_name=self._get_model(task),
                     invocation_id=cache_key[:16],
@@ -264,16 +306,7 @@ class LLMGateway:
         )
 
         # 10. Try to parse as JSON
-        parsed = None
-        try:
-            # Strip markdown code fences if present
-            clean = content.strip()
-            if clean.startswith("```"):
-                lines = clean.split("\n")
-                clean = "\n".join(lines[1:-1]) if len(lines) > 2 else clean
-            parsed = json.loads(clean)
-        except (json.JSONDecodeError, ValueError):
-            pass
+        parsed = self._parse_json(content)
 
         return GatewayResponse(
             content=content,

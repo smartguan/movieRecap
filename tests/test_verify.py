@@ -49,3 +49,33 @@ def test_check_segment_types():
     }
     findings = _check_segment_types(script)
     assert not any(f["severity"] == "warning" for f in findings)
+
+
+def test_check_narration_cleanliness():
+    from src.ai.verify import _check_narration_cleanliness
+    from src.ai.script import clean_narration_text
+
+    # Unparsed JSON string with quotes and underscores
+    bad_script = {
+        "segments": [
+            {"segment_id": "seg-1", "text": '{"text": "如果一段四十年前无疾而终...", "supporting_scenes": [{"start_seconds": 35.0}]}'}
+        ]
+    }
+    findings = _check_narration_cleanliness(bad_script)
+    assert any(f["check"] == "narration_cleanliness" and f["severity"] == "fail" for f in findings)
+
+    # Clean script
+    clean_text = clean_narration_text(bad_script["segments"][0]["text"])
+    assert "{" not in clean_text
+    assert "_" not in clean_text
+    assert '"' not in clean_text
+    assert "如果一段四十年前无疾而终" in clean_text
+
+    good_script = {
+        "segments": [
+            {"segment_id": "seg-1", "text": clean_text}
+        ]
+    }
+    findings_good = _check_narration_cleanliness(good_script)
+    assert any(f["check"] == "narration_cleanliness" and f["severity"] == "pass" for f in findings_good)
+

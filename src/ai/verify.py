@@ -52,6 +52,7 @@ def verify_script(
     # Phase 1: Deterministic checks
     logger.info("Running deterministic verification checks...")
     findings.extend(_check_schema(script))
+    findings.extend(_check_narration_cleanliness(script))
     findings.extend(_check_length(script, config))
     findings.extend(_check_evidence(script, scene_index))
     findings.extend(_check_character_names(script, story))
@@ -147,6 +148,39 @@ def _check_schema(script: dict[str, Any]) -> list[dict[str, Any]]:
                 "severity": "warning",
                 "message": f"Segment {seg.get('segment_id', i)} has low confidence: {seg.get('confidence')}",
             })
+
+    return findings
+
+
+def _check_narration_cleanliness(script: dict[str, Any]) -> list[dict[str, Any]]:
+    """
+    Check that script narration text contains pure human speech.
+    Flags raw JSON keys, braces, markdown code fences, underscores, or stray quotes.
+    """
+    findings = []
+    segments = script.get("segments", [])
+
+    json_indicators = ['"text":', '"segments":', '"supporting_scenes":', '"confidence":', "```", "{", "}", "_"]
+    corrupted_segments = []
+
+    for i, seg in enumerate(segments):
+        text = seg.get("text", "")
+        detected = [ind for ind in json_indicators if ind in text]
+        if detected:
+            corrupted_segments.append((seg.get("segment_id", f"segment-{i}"), detected))
+
+    if corrupted_segments:
+        findings.append({
+            "check": "narration_cleanliness",
+            "severity": "fail",
+            "message": f"{len(corrupted_segments)} segments contain unparsed JSON/code artifacts: {corrupted_segments[:3]}",
+        })
+    else:
+        findings.append({
+            "check": "narration_cleanliness",
+            "severity": "pass",
+            "message": "All narration segments contain clean human-spoken text",
+        })
 
     return findings
 

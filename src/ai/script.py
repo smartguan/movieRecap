@@ -140,6 +140,67 @@ def generate_script(
     return script
 
 
+def clean_narration_text(text: str) -> str:
+    """
+    Clean and sanitize narration text to ensure pure human speech.
+    Strips raw JSON syntax, quotes, keys, markdown formatting, and symbols
+    that TTS engines might synthesize as punctuation words.
+    """
+    import re
+
+    if not text:
+        return ""
+
+    text = text.strip()
+
+    # If the text is wrapped in JSON or contains JSON structure, attempt to parse it
+    if text.startswith("{") or text.startswith("[") or '"text":' in text or '"segments":' in text:
+        try:
+            parsed = json.loads(text)
+            if isinstance(parsed, dict):
+                if "text" in parsed and isinstance(parsed["text"], str):
+                    text = parsed["text"]
+                elif "segments" in parsed and isinstance(parsed["segments"], list):
+                    text = " ".join(
+                        s.get("text", "") for s in parsed["segments"] if isinstance(s, dict) and s.get("text")
+                    )
+            elif isinstance(parsed, list):
+                text = " ".join(
+                    s.get("text", "") if isinstance(s, dict) else str(s) for s in parsed
+                )
+        except Exception:
+            pass
+
+    # Remove markdown code fences and backticks
+    text = re.sub(r"```[\w]*\n?", "", text)
+    text = re.sub(r"```", "", text)
+    text = re.sub(r"`", "", text)
+
+    # If JSON keys like "text": "...", "confidence": ..., "supporting_scenes": ... are present
+    if '"text":' in text or "'text':" in text:
+        matches = re.findall(r'["\']text["\']\s*:\s*["\']([^"\']+)["\']', text)
+        if matches:
+            text = " ".join(matches)
+
+    # Remove structural JSON keys and metadata lines if any remain
+    text = re.sub(
+        r'["\']?(supporting_scenes|start_seconds|end_seconds|confidence|segment_type|segments)["\']?\s*:\s*[^,\n]+',
+        "",
+        text,
+    )
+
+    # Remove structural brackets, braces, and escape sequences
+    text = re.sub(r"[{}\[\]]", "", text)
+    text = text.replace('\\"', '"').replace("\\n", " ")
+
+    # Remove stray quotes, colons, underscores that cause TTS to read "下划线" or "引号"
+    text = text.replace('"', "").replace("'", "").replace("_", " ")
+
+    # Clean up double spaces or weird whitespace
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
+
 def _generate_hook(
     gateway: LLMGateway,
     story: dict[str, Any],
@@ -178,10 +239,25 @@ Respond in JSON:
         context=context,
     )
 
-    return response.parsed or {
-        "text": response.content,
-        "supporting_scenes": [],
-        "confidence": 0.5,
+    parsed = response.parsed
+    if isinstance(parsed, dict):
+        raw_text = parsed.get("text", "")
+        scenes = parsed.get("supporting_scenes", [])
+        conf = parsed.get("confidence", 0.9)
+    elif isinstance(parsed, list) and len(parsed) > 0 and isinstance(parsed[0], dict):
+        raw_text = parsed[0].get("text", "")
+        scenes = parsed[0].get("supporting_scenes", [])
+        conf = parsed[0].get("confidence", 0.9)
+    else:
+        raw_text = response.content
+        scenes = []
+        conf = 0.5
+
+    clean_text = clean_narration_text(raw_text)
+    return {
+        "text": clean_text,
+        "supporting_scenes": scenes if isinstance(scenes, list) else [],
+        "confidence": conf,
     }
 
 
@@ -238,8 +314,51 @@ Respond in JSON:
         evidence_refs=evidence_refs,
     )
 
-    result = response.parsed or {}
-    return result.get("segments", [{"text": response.content, "supporting_scenes": [], "confidence": 0.5, "segment_type": "plot"}])
+    parsed = response.parsed
+    results: list[dict[str, Any]] = []
+
+    if isinstance(parsed, dict) and "segments" in parsed and isinstance(parsed["segments"], list):
+        for s in parsed["segments"]:
+            if isinstance(s, dict):
+                clean_text = clean_narration_text(s.get("text", ""))
+                if clean_text:
+                    results.append({
+                        "text": clean_text,
+                        "supporting_scenes": s.get("supporting_scenes", []),
+                        "confidence": s.get("confidence", 0.9),
+                        "segment_type": s.get("segment_type", "plot_and_commentary"),
+                    })
+    elif isinstance(parsed, list):
+        for s in parsed:
+            if isinstance(s, dict):
+                clean_text = clean_narration_text(s.get("text", ""))
+                if clean_text:
+                    results.append({
+                        "text": clean_text,
+                        "supporting_scenes": s.get("supporting_scenes", []),
+                        "confidence": s.get("confidence", 0.9),
+                        "segment_type": s.get("segment_type", "plot_and_commentary"),
+                    })
+    elif isinstance(parsed, dict) and "text" in parsed:
+        clean_text = clean_narration_text(parsed.get("text", ""))
+        if clean_text:
+            results.append({
+                "text": clean_text,
+                "supporting_scenes": parsed.get("supporting_scenes", []),
+                "confidence": parsed.get("confidence", 0.9),
+                "segment_type": parsed.get("segment_type", "plot_and_commentary"),
+            })
+
+    if not results:
+        clean_text = clean_narration_text(response.content)
+        results = [{
+            "text": clean_text,
+            "supporting_scenes": [],
+            "confidence": 0.5,
+            "segment_type": "plot_and_commentary",
+        }]
+
+    return results
 
 
 def _generate_conclusion(
@@ -279,10 +398,25 @@ Respond in JSON:
         context=context,
     )
 
-    return response.parsed or {
-        "text": response.content,
-        "supporting_scenes": [],
-        "confidence": 0.5,
+    parsed = response.parsed
+    if isinstance(parsed, dict):
+        raw_text = parsed.get("text", "")
+        scenes = parsed.get("supporting_scenes", [])
+        conf = parsed.get("confidence", 0.9)
+    elif isinstance(parsed, list) and len(parsed) > 0 and isinstance(parsed[0], dict):
+        raw_text = parsed[0].get("text", "")
+        scenes = parsed[0].get("supporting_scenes", [])
+        conf = parsed[0].get("confidence", 0.9)
+    else:
+        raw_text = response.content
+        scenes = []
+        conf = 0.5
+
+    clean_text = clean_narration_text(raw_text)
+    return {
+        "text": clean_text,
+        "supporting_scenes": scenes if isinstance(scenes, list) else [],
+        "confidence": conf,
     }
 
 

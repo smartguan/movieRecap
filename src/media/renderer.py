@@ -13,6 +13,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+from src.ai.script import clean_narration_text
 from src.utils.timing import seconds_to_srt_time
 
 logger = logging.getLogger(__name__)
@@ -33,7 +34,7 @@ def generate_recap_subtitles(edit_decisions: list[dict[str, Any]], srt_path: Pat
     for i, dec in enumerate(edit_decisions, start=1):
         start_str = seconds_to_srt_time(dec["timeline_start"])
         end_str = seconds_to_srt_time(dec["timeline_end"])
-        text = dec.get("text", "").strip()
+        text = clean_narration_text(dec.get("text", "").strip())
 
         lines.append(str(i))
         lines.append(f"{start_str} --> {end_str}")

@@ -71,6 +71,35 @@ def test_cache_hit(tmp_path):
     assert response.content == "cached response"
 
 
+def test_cache_hit_json_parsing(tmp_path):
+    """Test that cache hits parse JSON payload into parsed field."""
+    gw = _make_gateway({
+        "llm": {
+            "provider": "google",
+            "api_key": "test",
+            "cache_enabled": True,
+            "cache_dir": str(tmp_path / "cache"),
+        }
+    })
+    _register_test_task(gw)
+
+    import hashlib
+    import json
+    prompt = "json prompt"
+    cache_key = hashlib.sha256(f"test_task:{prompt}".encode()).hexdigest()
+    cache_dir = tmp_path / "cache"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    payload = json.dumps({"text": "测试旁白", "confidence": 0.95})
+    (cache_dir / f"{cache_key}.json").write_text(
+        json.dumps({"content": payload, "timestamp": "2025-01-01"}),
+        encoding="utf-8",
+    )
+
+    response = gw.invoke(task_name="test_task", prompt=prompt)
+    assert response.cache_hit is True
+    assert response.parsed == {"text": "测试旁白", "confidence": 0.95}
+
+
 def test_telemetry_tracking():
     """Test that telemetry is properly tracked."""
     gw = _make_gateway()
