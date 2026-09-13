@@ -1,0 +1,31 @@
+# Channel Profile — Movie Commentary Autopilot
+channel:
+  name: "Movie Commentary"
+  language: zh-CN
+  target_duration_minutes:
+    min: 20
+    max: 30
+  niche: korean-thriller-drama
+  commentary_style: serious-analysis
+  voice_id: ""  # TBD: configure with TTS provider
+
+content_policy:
+  max_violence_level: moderate
+  allow_profanity: false
+  require_spoiler_warning: true
+  max_sensitivity_level: 3  # 1-5 scale
+
+branding:
+  logo_path: ""
+  intro_duration_seconds: 5
+  outro_duration_seconds: 10
+  font_family: "Noto Sans SC"
+  primary_color: "#1a1a2e"
+  accent_color: "#e94560"
+
+subtitles:
+  enabled: true
+  style: burned_in
+  font_size: 48
+  margin_bottom: 60
+  outline_width: 2

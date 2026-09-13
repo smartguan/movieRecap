@@ -1,0 +1,17 @@
+[project]
+name = "movie-commentary-autopilot"
+version = "0.1.0"
+description = "Movie Commentary Autopilot project"
+requires-python = ">=3.11"
+dependencies = [
+    "pydantic>=2.0",
+    "pyyaml",
+    "scenedetect[opencv]",
+    "google-genai"
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-cov"
+]

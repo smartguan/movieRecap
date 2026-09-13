@@ -1,0 +1,41 @@
+# System Settings — Copy to settings.yaml and configure
+paths:
+  incoming_dir: data/incoming
+  projects_dir: data/projects
+  output_dir: data/output
+
+llm:
+  provider: google  # google, openai, anthropic
+  model_default: gemini-2.0-flash
+  model_strong: gemini-2.5-pro
+  api_key: ""  # Set via environment variable LLM_API_KEY
+  max_tokens_per_task: 8000
+  max_cost_per_project_usd: 5.00
+  cache_enabled: true
+  cache_dir: data/cache/llm
+
+tts:
+  provider: ""  # azure, google, elevenlabs
+  api_key: ""
+  voice_id: ""
+  speaking_rate: 1.0
+
+youtube:
+  client_secrets_path: ""
+  token_path: ""
+  default_privacy: private
+  default_category: 24  # Entertainment
+  default_language: zh-CN
+
+quality:
+  min_confidence: 0.85
+  max_reuse_ratio: 0.15
+  loudness_target_lufs: -14
+  loudness_tolerance_db: 2
+
+budgets:
+  max_input_tokens: 500000
+  max_output_tokens: 100000
+  max_vision_frames: 200
+  max_tts_characters: 10000
+  max_retries: 3
