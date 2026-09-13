@@ -5,12 +5,13 @@ import json
 import shutil
 import uuid
 from pathlib import Path
-from typing import Tuple, List, Optional, Dict, Any
+from typing import Tuple, List, Optional, Dict, Any, Union
 
 from src.models.project import Project, MediaInfo
 from src.media.probe import extract_media_info
 
 SUPPORTED_MEDIA_EXTENSIONS = {".mp4", ".mkv", ".avi", ".mov", ".webm", ".flv", ".ts", ".m4v"}
+
 
 def compute_file_hash(path: Path, algorithm: str = 'sha256') -> str:
     """Compute hash of a file in chunks."""
@@ -19,6 +20,7 @@ def compute_file_hash(path: Path, algorithm: str = 'sha256') -> str:
         while chunk := f.read(65536):
             hash_func.update(chunk)
     return hash_func.hexdigest()
+
 
 def validate_incoming(incoming_dir: Path) -> Tuple[bool, List[str]]:
     """Validate incoming folder has source media."""
@@ -34,8 +36,16 @@ def validate_incoming(incoming_dir: Path) -> Tuple[bool, List[str]]:
         
     return len(errors) == 0, errors
 
-def ingest_movie(incoming_dir: Path, projects_dir: Path) -> Dict[str, Any]:
-    """Ingest a movie into a new project."""
+
+def ingest_movie(
+    incoming_dir: Path,
+    projects_dir: Path,
+    target_duration_range: Optional[Union[List[float], Tuple[float, float]]] = None,
+    duration_ratio: float = 0.20,
+) -> Dict[str, Any]:
+    """
+    Ingest a movie into a new project with proportional 1/5 duration targeting.
+    """
     valid, errors = validate_incoming(incoming_dir)
     if not valid:
         raise ValueError(f"Invalid incoming directory: {', '.join(errors)}")
@@ -85,6 +95,8 @@ def ingest_movie(incoming_dir: Path, projects_dir: Path) -> Dict[str, Any]:
         source_hash=file_hash,
         title=title,
         media_info=media_info_dict,
-        metadata=metadata
+        metadata=metadata,
+        target_duration_range=target_duration_range,
+        duration_ratio=duration_ratio,
     )
     return project

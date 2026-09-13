@@ -5,7 +5,7 @@ from __future__ import annotations
 from enum import Enum
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from pydantic import BaseModel, Field
 
@@ -51,7 +51,7 @@ class Project(BaseModel):
     source_language: str = 'ko'
     target_language: str = 'zh-CN'
     state: ProjectState = ProjectState.RECEIVED
-    target_duration_range: Tuple[int, int] = (20, 30)
+    target_duration_range: Tuple[float, float] = (1.0, 30.0)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
     metadata: dict = Field(default_factory=dict)

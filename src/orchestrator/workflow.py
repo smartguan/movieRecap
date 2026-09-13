@@ -555,16 +555,7 @@ class WorkflowRunner:
         qa_file.write_text(json.dumps(qa_report, indent=2, ensure_ascii=False), encoding="utf-8")
         logger.info("Automated QA passed for %s", output_video)
 
-        # 1. Atomically export verified recap assets to public output directory
-        from src.media.renderer import export_recap_assets
-        public_output_dir = Path(self.config.get("paths", {}).get("output_dir", "output"))
-        export_recap_assets(
-            project_dir=project_dir,
-            movie_title=project.get("title", "Recap"),
-            output_dir=public_output_dir,
-        )
-
-        # 2. Automatically generate and persist Token & Cost Profile
+        # 1. Automatically generate and persist Token & Cost Profile
         try:
             from src.ai.profiler import TokenCostProfiler
             profiler = TokenCostProfiler(projects_dir=self.project_manager.projects_dir)
@@ -574,7 +565,7 @@ class WorkflowRunner:
         except Exception as e:
             logger.warning("Failed to generate token cost profile in QA stage: %s", e)
 
-        # 3. Automatically run Anti-AI-Slop Quality Evaluation
+        # 2. Automatically run Anti-AI-Slop Quality Evaluation
         try:
             from src.eval.slop_detector import SlopDetector
             detector = SlopDetector(self.config)
@@ -600,6 +591,20 @@ class WorkflowRunner:
             )
         except Exception as e:
             logger.warning("Failed to run Anti-Slop QA evaluation: %s", e)
+
+        # 3. Export complete Multi-Platform Package (YouTube, Bilibili, Subtitles, Covers, Metadata)
+        try:
+            from src.media.platform_exporter import PlatformExporter
+            public_output_dir = Path(self.config.get("paths", {}).get("output_dir", "output"))
+            exporter = PlatformExporter(output_root=public_output_dir)
+            exported_files = exporter.export_package(
+                project_dir=project_dir,
+                movie_title=project.get("title", "Recap"),
+                metadata=project.get("metadata", {}),
+            )
+            logger.info("Exported multi-platform bundle with %d assets", len(exported_files))
+        except Exception as e:
+            logger.warning("Failed to export multi-platform package: %s", e)
 
         return project
 

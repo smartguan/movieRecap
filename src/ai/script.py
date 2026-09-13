@@ -2,7 +2,7 @@
 Script generation module (FR-4).
 
 Generates a Mandarin narration script from the story understanding and scene index.
-Optimized for minimal LLM token consumption via high-density event serializations:
+Dynamically scales script length and segment counts to match proportional 1/5 duration targets:
 - Compact bullet event formatting (saving ~60% prompt tokens vs raw indented JSON)
 - Leverages fetcher metadata (synopsis, genre) for contextual grounding
 - Pure clean narration output sanitizer for TTS audio synthesis
@@ -27,13 +27,14 @@ def generate_script(
     config: dict[str, Any],
 ) -> dict[str, Any]:
     """
-    Generate the full narration script.
+    Generate the full narration script scaled dynamically to project target duration.
 
     Process:
-    1. Generate opening hook (SEMANTIC)
-    2. Generate body segments following the event timeline (SEMANTIC with compact token format)
-    3. Generate conclusion (SEMANTIC)
-    4. Assemble into complete script (DETERMINISTIC)
+    1. Calculate target character count from target_duration_range (250 chars/min)
+    2. Generate opening hook (SEMANTIC)
+    3. Generate body segments following the event timeline (SEMANTIC with compact token format)
+    4. Generate conclusion (SEMANTIC)
+    5. Assemble into complete script (DETERMINISTIC)
 
     Args:
         project: Project data dict.
@@ -49,16 +50,21 @@ def generate_script(
 
     title = project.get("title", "Unknown Movie")
     metadata = project.get("metadata", {})
-    target_min, target_max = project.get("target_duration_range", [20, 30])
+    target_min, target_max = project.get("target_duration_range", [2.0, 4.0])
+    target_duration_min = (target_min + target_max) / 2.0
     speaking_rate = 250.0  # chars per minute for Mandarin
-    min_chars = int(target_min * speaking_rate)
-    max_chars = int(target_max * speaking_rate)
+    total_target_chars = int(target_duration_min * speaking_rate)
+
+    # Dynamic character allocation
+    hook_chars = min(200, max(80, int(total_target_chars * 0.20)))
+    conclusion_chars = min(250, max(80, int(total_target_chars * 0.20)))
+    body_chars_total = max(100, total_target_chars - hook_chars - conclusion_chars)
 
     segments: list[dict[str, Any]] = []
     segment_counter = 0
 
     # 1. Generate opening hook (SEMANTIC)
-    hook = _generate_hook(gateway, story, title, metadata)
+    hook = _generate_hook(gateway, story, title, metadata, target_chars=hook_chars)
     hook["segment_id"] = f"narration-{segment_counter:03d}"
     hook["segment_type"] = "hook"
     segments.append(hook)
@@ -68,20 +74,26 @@ def generate_script(
     events = story.get("events", [])
     characters = story.get("characters", [])
 
-    # Process events in groups to maintain narrative flow
-    event_groups = _group_events(events, max_group_size=5)
+    # Group events dynamically based on target duration
+    # Short recap (1-3 min) -> 1-2 groups; Long recap (10-20 min) -> 4-8 groups
+    desired_body_groups = max(1, min(len(events), int(target_duration_min / 1.5)))
+    group_size = max(1, (len(events) + desired_body_groups - 1) // desired_body_groups)
+    event_groups = _group_events(events, max_group_size=group_size)
+
+    chars_per_group = max(80, body_chars_total // max(1, len(event_groups)))
 
     for group_idx, event_group in enumerate(event_groups):
         body_segments = _generate_body_segment(
-            gateway,
-            event_group,
-            story,
-            scene_index,
-            title,
-            characters,
-            group_idx,
-            len(event_groups),
-            metadata,
+            gateway=gateway,
+            events=event_group,
+            story=story,
+            scene_index=scene_index,
+            title=title,
+            characters=characters,
+            group_idx=group_idx,
+            total_groups=len(event_groups),
+            metadata=metadata,
+            target_chars=chars_per_group,
         )
 
         for seg in body_segments:
@@ -90,7 +102,7 @@ def generate_script(
             segment_counter += 1
 
     # 3. Generate conclusion (SEMANTIC)
-    conclusion = _generate_conclusion(gateway, story, title, metadata)
+    conclusion = _generate_conclusion(gateway, story, title, metadata, target_chars=conclusion_chars)
     conclusion["segment_id"] = f"narration-{segment_counter:03d}"
     conclusion["segment_type"] = "conclusion"
     segments.append(conclusion)
@@ -104,7 +116,7 @@ def generate_script(
         "title": title,
         "segments": segments,
         "total_characters": total_chars,
-        "estimated_duration_minutes": round(estimated_duration, 1),
+        "estimated_duration_minutes": round(estimated_duration, 2),
         "target_speaking_rate": speaking_rate,
         "target_range_minutes": [target_min, target_max],
         "version": 1,
@@ -112,10 +124,11 @@ def generate_script(
     }
 
     logger.info(
-        "Script generated: %d segments, %d chars, ~%.1f min",
+        "Script generated: %d segments, %d chars, ~%.2f min (target: %.2f min)",
         len(segments),
         total_chars,
         estimated_duration,
+        target_duration_min,
     )
 
     return script
@@ -185,8 +198,9 @@ def _generate_hook(
     story: dict[str, Any],
     title: str,
     metadata: Optional[dict[str, Any]] = None,
+    target_chars: int = 150,
 ) -> dict[str, Any]:
-    """Generate the opening hook segment (30-60 seconds, ~125-250 chars)."""
+    """Generate the opening hook segment."""
     one_sentence = story.get("one_sentence_summary", "")
     climax = story.get("climax", "")
     themes = story.get("themes", [])
@@ -204,13 +218,12 @@ def _generate_hook(
 
     context = "\n".join(context_parts)
 
-    prompt = f"""Write an engaging 30-60 second opening hook in Mandarin (中文) for a movie commentary video about "{title}".
+    prompt = f"""Write an engaging opening hook in Mandarin (中文) for a movie commentary video about "{title}".
 
 The hook should:
 - Immediately capture the viewer's attention
-- Hint at the most compelling aspect of the story WITHOUT revealing the ending
-- Set up why this movie is worth watching/discussing
-- Be 125-250 Chinese characters
+- Hint at the central conflict WITHOUT revealing the ending
+- Target length: approx {target_chars} Chinese characters (±20%)
 
 Respond in JSON:
 {{
@@ -259,9 +272,9 @@ def _generate_body_segment(
     group_idx: int,
     total_groups: int,
     metadata: Optional[dict[str, Any]] = None,
+    target_chars: int = 200,
 ) -> list[dict[str, Any]]:
     """Generate narration segments using compact token-dense event formatting."""
-    # Token-optimized compact event list instead of raw indented JSON
     event_lines = []
     for i, e in enumerate(events):
         ts = e.get("timestamp_seconds", 0.0)
@@ -273,20 +286,18 @@ def _generate_body_segment(
         )
     events_compact = "\n".join(event_lines)
 
-    # Compact character string
     char_strs = [
         f"{c.get('name')}" + (f" ({c.get('description')})" if c.get('description') else "")
-        for c in characters[:8]  # Limit to key characters
+        for c in characters[:8]
     ]
     chars_compact = ", ".join(char_strs) if char_strs else "Main Characters"
 
     prompt = f"""Write narration segments in Mandarin (中文) for part {group_idx + 1}/{total_groups} of "{title}".
 
 Cover these story events with:
-- Clear, condensed storytelling
-- Original commentary and insights (NOT just plot summary)
-- Natural transitions between events
-- Each segment should be 200-400 Chinese characters
+- Clear, condensed storytelling and sharp commentary
+- Target length: approx {target_chars} Chinese characters total for this part
+- Natural transitions
 
 Respond in JSON:
 {{
@@ -367,6 +378,7 @@ def _generate_conclusion(
     story: dict[str, Any],
     title: str,
     metadata: Optional[dict[str, Any]] = None,
+    target_chars: int = 150,
 ) -> dict[str, Any]:
     """Generate the concluding segment with assessment and interpretation."""
     resolution = story.get("resolution", "")
@@ -383,7 +395,7 @@ Summary: {one_sentence}"""
 The conclusion should:
 - Wrap up the story
 - Provide commentary and analysis
-- Be 200-400 Chinese characters
+- Target length: approx {target_chars} Chinese characters
 
 Respond in JSON:
 {{
@@ -423,14 +435,11 @@ Respond in JSON:
 def _group_events(
     events: list[dict[str, Any]], max_group_size: int = 5
 ) -> list[list[dict[str, Any]]]:
-    """
-    Group events into chunks for sequential processing.
-
-    DETERMINISTIC: Simple list chunking.
-    """
+    """Group events into chunks for sequential processing."""
     if not events:
         return [[]]
+    safe_size = max(1, max_group_size)
     return [
-        events[i : i + max_group_size]
-        for i in range(0, len(events), max_group_size)
+        events[i : i + safe_size]
+        for i in range(0, len(events), safe_size)
     ]

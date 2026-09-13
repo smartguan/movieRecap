@@ -10,7 +10,7 @@ import json
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, List, Optional, Tuple, Union
 
 from src.orchestrator.states import (
     InvalidTransitionError,
@@ -37,11 +37,15 @@ class ProjectManager:
         source_path: Path,
         source_hash: str,
         title: str,
-        media_info: dict[str, Any] | None = None,
-        metadata: dict[str, Any] | None = None,
+        media_info: Optional[dict[str, Any]] = None,
+        metadata: Optional[dict[str, Any]] = None,
+        target_duration_range: Optional[Union[List[float], Tuple[float, float]]] = None,
+        duration_ratio: float = 0.20,
     ) -> dict[str, Any]:
         """
         Create a new project from an incoming source.
+
+        Calculates dynamic 1/5 duration target range based on source media duration.
 
         Args:
             source_path: Path to the source media file.
@@ -49,6 +53,8 @@ class ProjectManager:
             title: Movie title.
             media_info: Extracted media information.
             metadata: Optional user-supplied metadata.
+            target_duration_range: Optional explicit target duration range in minutes [min, max].
+            duration_ratio: Proportional duration ratio (default: 0.20 = 1/5).
 
         Returns:
             Project data dict with all fields initialized.
@@ -56,16 +62,36 @@ class ProjectManager:
         project_id = str(uuid.uuid4())
         now = datetime.now(timezone.utc).isoformat()
 
+        # Compute dynamic duration range
+        if target_duration_range is not None:
+            final_duration_range = list(target_duration_range)
+        else:
+            duration_sec = 0.0
+            if media_info:
+                duration_sec = media_info.get("duration_seconds", 0.0) or media_info.get("duration", 0.0)
+            elif metadata:
+                duration_sec = metadata.get("duration_seconds", 0.0)
+
+            if duration_sec > 0:
+                source_min = duration_sec / 60.0
+                target_recap_min = max(0.5, round(source_min * duration_ratio, 2))
+                final_duration_range = [
+                    round(target_recap_min * 0.85, 2),
+                    round(target_recap_min * 1.15, 2),
+                ]
+            else:
+                final_duration_range = [20.0, 30.0]
+
         project = {
             "project_id": project_id,
             "source_path": str(source_path),
             "source_hash": source_hash,
             "title": title,
-            "release_year": metadata.get("release_year") if metadata else None,
-            "source_language": (metadata or {}).get("source_language", "ko"),
+            "release_year": (metadata or {}).get("release_year") or (metadata or {}).get("year"),
+            "source_language": (metadata or {}).get("source_language", "zh-CN"),
             "target_language": (metadata or {}).get("target_language", "zh-CN"),
             "state": ProjectState.RECEIVED.value,
-            "target_duration_range": [20, 30],
+            "target_duration_range": final_duration_range,
             "created_at": now,
             "updated_at": now,
             "metadata": metadata or {},
@@ -76,7 +102,7 @@ class ProjectManager:
                 {
                     "state": ProjectState.RECEIVED.value,
                     "timestamp": now,
-                    "details": "Project created",
+                    "details": f"Project created with target duration {final_duration_range[0]}-{final_duration_range[1]} min (ratio: {duration_ratio:.2f})",
                 }
             ],
         }
@@ -100,20 +126,7 @@ class ProjectManager:
         to_state: ProjectState,
         details: str = "",
     ) -> dict[str, Any]:
-        """
-        Transition a project to a new state.
-
-        Args:
-            project: Project data dict.
-            to_state: Target state.
-            details: Optional details about the transition.
-
-        Returns:
-            Updated project dict.
-
-        Raises:
-            InvalidTransitionError: If the transition is not valid.
-        """
+        """Transition a project to a new state."""
         from_state = ProjectState(project["state"])
         validate_transition(from_state, to_state)
 
@@ -135,15 +148,7 @@ class ProjectManager:
         return project
 
     def save_project(self, project: dict[str, Any]) -> Path:
-        """
-        Save project state to disk as JSON.
-
-        Args:
-            project: Project data dict.
-
-        Returns:
-            Path to the saved project file.
-        """
+        """Save project state to disk as JSON."""
         project_dir = self.projects_dir / project["project_id"]
         project_dir.mkdir(parents=True, exist_ok=True)
         project_file = project_dir / "project.json"
@@ -154,18 +159,7 @@ class ProjectManager:
         return project_file
 
     def load_project(self, project_id: str) -> dict[str, Any]:
-        """
-        Load a project from disk.
-
-        Args:
-            project_id: UUID of the project.
-
-        Returns:
-            Project data dict.
-
-        Raises:
-            FileNotFoundError: If the project does not exist.
-        """
+        """Load a project from disk."""
         project_file = self.projects_dir / project_id / "project.json"
         if not project_file.exists():
             raise FileNotFoundError(f"Project not found: {project_id}")
@@ -173,17 +167,9 @@ class ProjectManager:
 
     def list_projects(
         self,
-        state_filter: ProjectState | None = None,
+        state_filter: Optional[ProjectState] = None,
     ) -> list[dict[str, Any]]:
-        """
-        List all projects, optionally filtered by state.
-
-        Args:
-            state_filter: If provided, only return projects in this state.
-
-        Returns:
-            List of project data dicts.
-        """
+        """List all projects, optionally filtered by state."""
         projects = []
         for project_dir in self.projects_dir.iterdir():
             if not project_dir.is_dir():
@@ -204,16 +190,7 @@ class ProjectManager:
         return self.projects_dir / project_id
 
     def add_cost(self, project: dict[str, Any], cost_usd: float) -> dict[str, Any]:
-        """
-        Add cost to a project's running total.
-
-        Args:
-            project: Project data dict.
-            cost_usd: Cost to add in USD.
-
-        Returns:
-            Updated project dict.
-        """
+        """Add cost to a project's running total."""
         project["cost_usd"] = project.get("cost_usd", 0.0) + cost_usd
         project["updated_at"] = datetime.now(timezone.utc).isoformat()
         self.save_project(project)
