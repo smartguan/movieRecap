@@ -50,8 +50,24 @@ def extract_scene_keyframes(video_path: Path, scenes: List[Tuple[float, float]],
             step = duration / (frames_per_scene - 1) if frames_per_scene > 1 else 0
             timestamps = [start + j * step for j in range(frames_per_scene)]
             
-        scene_dir = output_dir / f"scene_{i:04d}"
-        scene_paths = extract_keyframes(video_path, timestamps, scene_dir)
-        result[i] = scene_paths
+        extracted = []
+        for j, ts in enumerate(timestamps):
+            output_file = output_dir / f"scene_{i:04d}_frame_{j:02d}_{ts:.2f}.jpg"
+            cmd = [
+                "ffmpeg",
+                "-y",
+                "-ss", str(ts),
+                "-i", str(video_path),
+                "-vframes", "1",
+                "-q:v", "2",
+                str(output_file)
+            ]
+            try:
+                subprocess.run(cmd, capture_output=True, text=True, check=True)
+                if output_file.exists():
+                    extracted.append(output_file)
+            except Exception:
+                continue
+        result[i] = extracted
         
     return result

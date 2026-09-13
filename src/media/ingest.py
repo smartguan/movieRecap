@@ -5,10 +5,12 @@ import json
 import shutil
 import uuid
 from pathlib import Path
-from typing import Tuple, List, Optional
+from typing import Tuple, List, Optional, Dict, Any
 
 from src.models.project import Project, MediaInfo
 from src.media.probe import extract_media_info
+
+SUPPORTED_MEDIA_EXTENSIONS = {".mp4", ".mkv", ".avi", ".mov", ".webm", ".flv", ".ts", ".m4v"}
 
 def compute_file_hash(path: Path, algorithm: str = 'sha256') -> str:
     """Compute hash of a file in chunks."""
@@ -25,15 +27,14 @@ def validate_incoming(incoming_dir: Path) -> Tuple[bool, List[str]]:
         errors.append(f"Directory {incoming_dir} does not exist.")
         return False, errors
         
-    media_extensions = {".mp4", ".mkv", ".avi", ".mov"}
-    found_media = any(f.suffix.lower() in media_extensions for f in incoming_dir.iterdir() if f.is_file())
+    found_media = any(f.suffix.lower() in SUPPORTED_MEDIA_EXTENSIONS for f in incoming_dir.iterdir() if f.is_file())
     
     if not found_media:
         errors.append(f"No valid media file found in {incoming_dir}")
         
     return len(errors) == 0, errors
 
-def ingest_movie(incoming_dir: Path, projects_dir: Path) -> Project:
+def ingest_movie(incoming_dir: Path, projects_dir: Path) -> Dict[str, Any]:
     """Ingest a movie into a new project."""
     valid, errors = validate_incoming(incoming_dir)
     if not valid:
@@ -46,48 +47,44 @@ def ingest_movie(incoming_dir: Path, projects_dir: Path) -> Project:
     # Create subdirectories
     (project_dir / "media").mkdir(exist_ok=True)
     (project_dir / "audio").mkdir(exist_ok=True)
-    (project_dir / "frames").mkdir(exist_ok=True)
-    (project_dir / "output").mkdir(exist_ok=True)
+    (project_dir / "keyframes").mkdir(exist_ok=True)
+    (project_dir / "assets").mkdir(exist_ok=True)
+    (project_dir / "renders").mkdir(exist_ok=True)
     
     # Find source video
-    media_extensions = {".mp4", ".mkv", ".avi", ".mov"}
-    source_file = next(f for f in incoming_dir.iterdir() if f.is_file() and f.suffix.lower() in media_extensions)
+    source_file = next(f for f in incoming_dir.iterdir() if f.is_file() and f.suffix.lower() in SUPPORTED_MEDIA_EXTENSIONS)
     
     dest_file = project_dir / "media" / source_file.name
     shutil.copy2(source_file, dest_file)
     
     file_hash = compute_file_hash(dest_file)
-    media_info = extract_media_info(dest_file)
+    media_info_model = extract_media_info(dest_file)
+    media_info_dict = media_info_model.model_dump()
     
     # Check for metadata and subtitles
-    title = source_file.stem
-    description = ""
+    title = source_file.stem.replace("_", " ")
+    metadata = {}
     
     metadata_file = incoming_dir / "metadata.json"
     if metadata_file.exists():
         try:
-            with open(metadata_file, "r") as f:
+            with open(metadata_file, "r", encoding="utf-8") as f:
                 metadata = json.load(f)
                 title = metadata.get("title", title)
-                description = metadata.get("description", description)
         except Exception:
             pass
             
     srt_file = incoming_dir / "subtitles.srt"
     if srt_file.exists():
         shutil.copy2(srt_file, project_dir / "media" / "subtitles.srt")
-        
-    project = Project(
-        id=project_id,
-        name=title,
-        description=description,
-        source_path=str(dest_file.absolute()),
-        file_hash=file_hash,
-        media_info=media_info
-    )
     
-    # Save state (assuming Project is a Pydantic model)
-    with open(project_dir / "project.json", "w") as f:
-        f.write(project.model_dump_json(indent=2))
-        
+    from src.orchestrator.project import ProjectManager
+    pm = ProjectManager(projects_dir)
+    project = pm.create_project(
+        source_path=dest_file,
+        source_hash=file_hash,
+        title=title,
+        media_info=media_info_dict,
+        metadata=metadata
+    )
     return project
