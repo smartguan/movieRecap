@@ -1,6 +1,6 @@
 # Movie Commentary Evaluation & Anti-AI-Slop Quality Specification
 
-**Version:** 1.0  
+**Version:** 1.1  
 **Status:** Active  
 **Last Updated:** 2026-09-13  
 **Superseded By:** N/A  
@@ -11,7 +11,10 @@
 
 The **Movie Commentary Autopilot** produces automated long-form Mandarin commentary videos from source films. While automated pipelines can easily assemble summaries, standard LLM-generated scripts often degenerate into **"AI Slop"**—formulaic, passive, repetitive recaps filled with robotic clichés, missing genuine analytical insight, and detached from visual pacing.
 
-This specification establishes a **rigorous two-tier Evaluation Infrastructure** designed to detect, grade, and prevent AI Slop before video generation or publishing.
+This specification establishes:
+1. A **two-tier Evaluation Infrastructure** to detect, grade, and prevent AI Slop before video generation or publishing.
+2. A dedicated **Cross-Modal Audio-Visual Coupling** metric ensuring visual scene cuts match narration content and pacing.
+3. Strict **Evaluator Token Cost Profiling** measuring per-metric token spend and verifying that deterministic checks consume **0 tokens**.
 
 ---
 
@@ -24,7 +27,8 @@ An automated movie recap is classified as **AI Slop** if it exhibits any of the 
 | **Formulaic Clichés & Templates** | Overuse of stereotypical transition phrases (*"不得不说"*, *"让我们拭目以待"*, *"事情并没有那么简单"*, *"镜头一转"*, *"总而言之"*). | Deterministic (Regex / Ban-list matcher) |
 | **Passive Dry Summary** | Monotonous "Character A did X, then Character B did Y" without editorial interpretation, cultural context, directorial criticism, humor, or thematic analysis. | Semantic LLM Judge (Commentary Depth Rubric) |
 | **Repetitive Vocabulary & N-grams** | Low lexical diversity, looping phrases, high token repetition within short windows. | Deterministic (Type-Token Ratio, Distinct-2/3 n-grams) |
-| **Evidence & Visual Disconnect** | Commentary describes scenes that do not match the underlying video clip timestamps or reveals climax spoilers in the opening. | Deterministic (Timestamp mapping & chronological validation) |
+| **Audio-Visual Disconnect** | Narration discusses character emotions/dialogue while video shows unrelated scenery, or shot lingers statically for >12s during intense commentary. | Cross-Modal AV Matcher & Shot Duration Analysis |
+| **Evidence & Timeline Disconnect** | Commentary describes scenes that do not match the underlying video clip timestamps or reveals climax spoilers in the opening. | Deterministic (Timestamp mapping & chronological validation) |
 | **Mechanical & Formatting Leaks** | Raw JSON keys, punctuation words synthesized by TTS (*"下划线"*, *"引号"*), code blocks, unparsed markdown. | Deterministic (Cleanliness scanner) |
 | **Robotic Delivery & Pacing** | Monotone sentence length, abnormal speaking rates (<200 or >290 chars/min), excessive subtitle gaps or overlaps. | Deterministic (Speech timing & audio alignment) |
 
@@ -36,66 +40,56 @@ The evaluation pipeline follows a **Deterministic-First** hierarchy:
 
 ```mermaid
 graph TD
-    A[Generated Recap Project] --> B[Deterministic Evaluation Engine]
+    A[Generated Recap Project] --> B[Deterministic Evaluation Engine - 0 Tokens]
     B --> B1[Cleanliness Gate]
     B --> B2[Lexical Diversity & Cliché Scanner]
     B --> B3[Evidence Grounding & Timeline Check]
-    B --> B4[Speech Rate & Audio/Video Sync]
+    B --> B4[Speech Rate & Pacing Sync]
+    B --> B5[Cross-Modal AV Coupling & Shot Dynamics]
     
-    B1 & B2 & B3 & B4 --> C{Deterministic Gate Passed?}
-    C -- Hard Fail --> F[Reject: Immediate Deterministic Failure]
+    B1 & B2 & B3 & B4 & B5 --> C{Deterministic Gate Passed?}
+    C -- Hard Fail --> F[Reject: Immediate Deterministic Failure - 0 Tokens Spent]
     C -- Pass / Warn --> D[Semantic LLM Quality Evaluator via Gateway]
     
     D --> D1[Commentary Depth & Insight]
     D --> D2[Hook Engagement & Tension]
     D --> D3[Authentic Mandarin Voice]
-    D --> D4[Emotional Resonance & Criticism]
     
-    D1 & D2 & D3 & D4 --> E[Composite Anti-Slop Scorecard]
-    E --> G{Score >= 85/100 & No Fails?}
-    G -- Yes --> H[Approved for Voice & Render]
-    G -- No --> I[Escalate / Trigger Rewrite with Targeted Feedback]
+    D1 & D2 & D3 --> E[Composite Anti-Slop Scorecard & Token Profile]
+    E --> G{Score >= 80/100 & No Fails?}
+    G -- Yes --> H[Approved for Render/Publish]
+    G -- No --> I[Escalate / Trigger Targeted Regeneration]
 ```
 
 ---
 
 ## 4. Evaluation Rubric & Scoring Model
 
-The overall **Anti-Slop Quality Score (0–100)** is computed across 5 weighted dimensions:
+The overall **Anti-Slop Quality Score (0–100)** is computed across 7 calibrated dimensions (weights sum to 1.00):
 
-$$\text{Total Score} = 0.20 \cdot S_{\text{clean}} + 0.20 \cdot S_{\text{diversity}} + 0.25 \cdot S_{\text{commentary}} + 0.20 \cdot S_{\text{voice}} + 0.15 \cdot S_{\text{alignment}}$$
+$$\text{Total Score} = \sum_{i=1}^{7} w_i \cdot S_i$$
 
-### Dimensions:
-1. **$S_{\text{clean}}$ Cleanliness & Formatting (Weight: 20%)**:
-   - 100 points: Zero JSON keys, brackets, underscores, or formatting leaks.
-   - 0 points (Hard Fail): Any unparsed JSON or code tokens present.
-2. **$S_{\text{diversity}}$ Lexical Diversity & Cliché Avoidance (Weight: 20%)**:
-   - Evaluates Type-Token Ratio (TTR), Distinct-2/3 n-grams, and penalizes matched clichés from the blacklist.
-3. **$S_{\text{commentary}}$ Commentary Depth vs Summary (Weight: 25%)**:
-   - Semantic evaluation of whether the text provides genuine critical insight, metaphors, character psychology, and thematic deconstruction.
-4. **$S_{\text{voice}}$ Natural Mandarin Narrative Voice (Weight: 20%)**:
-   - Evaluates whether the script sounds like an authentic top-tier documentary/video essayist (e.g. Bilibili/YouTube cinema creator style) rather than translated AI output.
-5. **$S_{\text{alignment}}$ Evidence & Audio-Visual Alignment (Weight: 15%)**:
-   - Validates that 100% of body segments reference verified scene timestamps, chronologically ordered, with audio durations matching video cuts within tolerance.
+| Metric Dimension ($S_i$) | Weight ($w_i$) | Evaluation Method | Target / Passing Threshold |
+| :--- | :---: | :---: | :--- |
+| **1. Cleanliness & Formatting** | **10%** | Deterministic (0 tokens) | 100 points: 0 JSON keys, 0 code fences, 0 TTS punctuation leaks. Any leak is a Hard Fail. |
+| **2. Lexical Diversity & Cliché Avoidance** | **15%** | Deterministic (0 tokens) | $\text{TTR} \ge 0.45$, $\text{Distinct-2} \ge 0.85$, 0 blacklist clichés. |
+| **3. Evidence & Temporal Alignment** | **10%** | Deterministic (0 tokens) | $100\%$ body segments mapped to source timestamps; forward chronological order. |
+| **4. Cross-Modal Audio-Visual Coupling** | **15%** | Deterministic + Index Matching (0 tokens) | Video shot duration $\le 12\text{s}$, character visual presence matches narration entities, timeline drift $|\Delta t| < 0.1\text{s}$. |
+| **5. Pacing & Speaking Rate** | **5%** | Deterministic (0 tokens) | $220\text{--}280\text{ Chinese chars/min}$. |
+| **6. Commentary Depth & Insight** | **25%** | Semantic LLM Judge | Score $\ge 75/100$: Original analysis, character psychology, thematic deconstruction. |
+| **7. Authentic Mandarin Voice & Hook** | **20%** | Semantic LLM Judge | Score $\ge 75/100$: High-curiosity hook without spoilers, natural cinema essayist tone. |
 
 ---
 
-## 5. Grading Tiers & Action Thresholds
+## 5. Evaluator Token Cost Profiling Contract
 
-| Grade | Score Range | Status | Action |
-| :--- | :---: | :--- | :--- |
-| **Tier S / A** | 90–100 | **Excellent** | Instant pass, publish ready. |
-| **Tier B** | 80–89 | **Acceptable** | Pass with minor optimization suggestions. |
-| **Tier C** | 70–79 | **Borderline Slop** | Warning; requires targeted rewriting of low-scoring segments. |
-| **Tier F** | < 70 (or any Hard Fail) | **AI Slop / Rejected** | Block video render; regenerate script with feedback prompt. |
-
----
-
-## 6. Benchmark Test Suite & Regression Testing
-
-The test suite evaluates standard benchmark movies across diverse genres:
-- `tears_of_steel`: Sci-Fi short (visual effects, cybernetics, romance, pacing).
-- `sintel`: Fantasy short (character emotion, dialogue-free visual interpretation).
-- `big_buck_bunny`: Animation comedy (humor, comedic timing, non-dialogue storytelling).
-
-Each benchmark run records tokens consumed, evaluation scores, and regression status in the project evaluation log.
+To enforce token minimization:
+1. **Deterministic Evaluator Spend**: MUST be strictly **0 tokens** and **$0.00 USD**.
+2. **Deterministic Early Exit**: If a hard deterministic failure is found (e.g. JSON leaks), semantic LLM evaluation is completely skipped, saving 100% of evaluation LLM tokens.
+3. **Per-Evaluator Telemetry**: Every evaluation report records:
+   - `evaluator_name`
+   - `is_deterministic`
+   - `input_tokens` / `output_tokens`
+   - `cost_usd`
+   - `cache_hit`
+4. **Target Evaluation Budget**: Total evaluation LLM cost must not exceed **$0.01 USD** per movie recap.

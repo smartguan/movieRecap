@@ -64,10 +64,14 @@ def test_deterministic_eval_clean_script():
         ],
     }
 
-    metrics, dims = evaluate_deterministic(clean_script)
+    metrics, dims, telemetry = evaluate_deterministic(clean_script)
     assert metrics.cleanliness_score == 100.0
     assert len(metrics.hard_failures) == 0
     assert metrics.evidence_grounded_ratio == 1.0
+    assert metrics.av_coupling.coupling_score >= 80.0
+    assert telemetry.is_deterministic is True
+    assert telemetry.total_tokens == 0
+    assert telemetry.cost_usd == 0.0
 
 
 def test_deterministic_eval_slop_leak():
@@ -82,9 +86,45 @@ def test_deterministic_eval_slop_leak():
         ],
     }
 
-    metrics, dims = evaluate_deterministic(leaky_script)
+    metrics, dims, telemetry = evaluate_deterministic(leaky_script)
     assert metrics.cleanliness_score == 0.0
     assert len(metrics.hard_failures) > 0
+
+
+def test_av_coupling_evaluation():
+    script = {
+        "title": "Tears of Steel",
+        "segments": [
+            {
+                "segment_id": "narration-000",
+                "text": "汤姆在实验室中与西莉亚对峙。",
+                "supporting_scenes": [{"start_seconds": 35.0, "end_seconds": 55.0}],
+            }
+        ]
+    }
+    story = {
+        "characters": [
+            {"name": "汤姆", "description": "男主角"},
+            {"name": "西莉亚", "description": "女主角"}
+        ]
+    }
+    scene_index = {
+        "scenes": [
+            {"scene_id": "scene-0", "start_seconds": 35.0, "end_seconds": 55.0, "characters": ["汤姆", "西莉亚"]}
+        ]
+    }
+    edit_decisions = [
+        {"segment_id": "narration-000", "duration": 20.0, "source_start": 35.0, "source_end": 55.0}
+    ]
+
+    metrics, dims, telemetry = evaluate_deterministic(
+        script=script,
+        story=story,
+        scene_index=scene_index,
+        edit_decisions=edit_decisions,
+    )
+    assert metrics.av_coupling.coupling_score == 100.0
+    assert metrics.av_coupling.av_duration_drift_seconds == 0.0
 
 
 def test_slop_detector_evaluation():
@@ -116,8 +156,11 @@ def test_slop_detector_evaluation():
     assert report.passed is True
     assert report.is_slop is False
     assert report.grade in (EvalGrade.TIER_S, EvalGrade.TIER_A, EvalGrade.TIER_B)
+    assert len(report.eval_telemetry) >= 2
+    assert any(t.is_deterministic and t.total_tokens == 0 for t in report.eval_telemetry)
 
     # Markdown format check
     md = detector.format_markdown_report(report)
     assert "# 🎬 Movie Recap Quality & Anti-Slop Scorecard" in md
-    assert "Cleanliness & Formatting" in md
+    assert "Cross-Modal Audio-Visual Coupling Telemetry" in md
+    assert "Evaluator LLM Token & Cost Telemetry" in md

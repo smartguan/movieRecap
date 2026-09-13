@@ -1,8 +1,8 @@
 """
 Anti-AI-Slop Quality Engine and Grading Scorer (FR-Eval).
 
-Aggregates deterministic metrics and semantic LLM evaluations into an
-actionable 0-100 quality scorecard with letter grades and CI/CD gate checks.
+Aggregates deterministic metrics, cross-modal AV coupling, and semantic LLM
+evaluations with detailed per-evaluator token cost telemetry.
 """
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from src.eval.deterministic_eval import evaluate_deterministic
-from src.eval.models import AntiSlopReport, DimensionScore, EvalGrade
+from src.eval.models import AntiSlopReport, DimensionScore, EvalGrade, EvaluatorTelemetry
 from src.eval.semantic_eval import evaluate_semantic
 
 logger = logging.getLogger(__name__)
@@ -54,17 +54,16 @@ class SlopDetector:
         scene_index_file = project_dir / "scene_index.json"
         scene_index = json.loads(scene_index_file.read_text(encoding="utf-8")) if scene_index_file.exists() else {}
 
-        # Audio duration from edit plan or voice files
-        audio_duration = 0.0
-        voice_dir = project_dir / "voice"
-        if voice_dir.exists():
-            # If we have voice files, we can estimate or read duration from script
-            audio_duration = script.get("estimated_duration_minutes", 2.0) * 60.0
+        edit_plan_file = project_dir / "edit_plan.json"
+        edit_decisions = json.loads(edit_plan_file.read_text(encoding="utf-8")) if edit_plan_file.exists() else []
+
+        audio_duration = script.get("estimated_duration_minutes", 2.0) * 60.0
 
         return self.evaluate_script(
             script=script,
             story=story,
             scene_index=scene_index,
+            edit_decisions=edit_decisions,
             timeline_audio_duration=audio_duration,
         )
 
@@ -73,6 +72,7 @@ class SlopDetector:
         script: dict[str, Any],
         story: dict[str, Any] | None = None,
         scene_index: dict[str, Any] | None = None,
+        edit_decisions: list[dict[str, Any]] | None = None,
         timeline_audio_duration: float | None = None,
     ) -> AntiSlopReport:
         """
@@ -80,20 +80,44 @@ class SlopDetector:
         """
         project_id = script.get("project_id", "test-project")
         movie_title = script.get("title", "Unknown Movie")
+        eval_telemetry: list[EvaluatorTelemetry] = []
 
-        # 1. Deterministic Evaluation
-        det_metrics, det_dims = evaluate_deterministic(
+        # 1. Deterministic Evaluation (0 Tokens)
+        det_metrics, det_dims, det_telemetry = evaluate_deterministic(
             script=script,
+            story=story,
             scene_index=scene_index,
+            edit_decisions=edit_decisions,
             timeline_audio_duration=timeline_audio_duration,
         )
+        eval_telemetry.append(det_telemetry)
 
         # 2. Semantic Evaluation
-        sem_metrics, sem_dims = evaluate_semantic(
-            script=script,
-            story=story or {},
-            config=self.config,
-        )
+        # If deterministic checks had hard failures (e.g. JSON leaks), skip semantic calls to save tokens!
+        is_hard_fail = len(det_metrics.hard_failures) > 0
+
+        if not is_hard_fail:
+            sem_metrics, sem_dims, sem_telemetry = evaluate_semantic(
+                script=script,
+                story=story or {},
+                config=self.config,
+            )
+            eval_telemetry.append(sem_telemetry)
+        else:
+            logger.warning("Skipping semantic evaluation due to deterministic hard failures (saved 100% eval tokens)")
+            from src.eval.models import SemanticMetrics
+            sem_metrics = SemanticMetrics(
+                commentary_depth_score=0.0,
+                hook_engagement_score=0.0,
+                narrative_voice_score=0.0,
+                emotional_resonance_score=0.0,
+                slop_indicators_detected=["Deterministic hard failure present"],
+            )
+            sem_dims = [
+                DimensionScore(name="Commentary Depth & Insight", score=0.0, weight=0.25, passed=False, details="Skipped due to hard failure"),
+                DimensionScore(name="Authentic Mandarin Voice", score=0.0, weight=0.10, passed=False, details="Skipped due to hard failure"),
+                DimensionScore(name="Hook Engagement & Tension", score=0.0, weight=0.10, passed=False, details="Skipped due to hard failure"),
+            ]
 
         # 3. Combine all dimensions
         all_dims = det_dims + sem_dims
@@ -102,23 +126,20 @@ class SlopDetector:
         raw_score = sum(d.score * d.weight for d in all_dims)
         total_score = min(100.0, max(0.0, round(raw_score, 1)))
 
-        # Hard gate check: if any deterministic hard failure occurred (e.g. JSON leaks)
-        is_hard_fail = len(det_metrics.hard_failures) > 0
-
         # Assign Grade
         if is_hard_fail or total_score < 70.0:
             grade = EvalGrade.TIER_F
             passed = False
             is_slop = True
-        elif total_score >= 92.0:
+        elif total_score >= 90.0:
             grade = EvalGrade.TIER_S
             passed = True
             is_slop = False
-        elif total_score >= 85.0:
+        elif total_score >= 82.0:
             grade = EvalGrade.TIER_A
             passed = True
             is_slop = False
-        elif total_score >= 78.0:
+        elif total_score >= 75.0:
             grade = EvalGrade.TIER_B
             passed = True
             is_slop = False
@@ -135,6 +156,9 @@ class SlopDetector:
         else:
             verdict = f"APPROVED (Grade {grade.value}): High quality authentic commentary ({total_score:.1f}/100)"
 
+        total_tokens = sum(t.total_tokens for t in eval_telemetry)
+        total_cost = sum(t.cost_usd for t in eval_telemetry)
+
         report = AntiSlopReport(
             project_id=project_id,
             movie_title=movie_title,
@@ -146,6 +170,12 @@ class SlopDetector:
             semantic=sem_metrics,
             dimensions=all_dims,
             summary_verdict=verdict,
+            eval_telemetry=eval_telemetry,
+            total_eval_tokens=total_tokens,
+            total_eval_cost_usd=round(total_cost, 6),
+            deterministic_savings_description=(
+                f"5 deterministic evaluators (Cleanliness, Diversity, Evidence, AV Coupling, Pacing) executed at 0 tokens ($0.00)"
+            ),
             timestamp=datetime.datetime.now(datetime.timezone.utc).isoformat(),
         )
 
@@ -175,13 +205,28 @@ class SlopDetector:
 
         md.extend([
             f"",
-            f"## 🔍 Deterministic Metric Telemetry",
-            f"- **Cleanliness Score**: {report.deterministic.cleanliness_score:.1f}%",
-            f"- **Lexical Diversity (TTR)**: {report.deterministic.lexical_diversity_ttr:.3f}",
-            f"- **Distinct-2 Bigram Ratio**: {report.deterministic.distinct_2_grams:.3f}",
-            f"- **AI Clichés Detected**: {len(report.deterministic.cliche_matches)}",
-            f"- **Evidence Grounding**: {report.deterministic.evidence_grounded_ratio * 100:.1f}%",
-            f"- **Chronological Consistency**: {'Passed' if report.deterministic.chronological_order_pass else 'Failed'}",
+            f"## 🎞 Cross-Modal Audio-Visual Coupling Telemetry",
+            f"- **Audio-Video Duration Drift**: `{report.deterministic.av_coupling.av_duration_drift_seconds:.3f}s`",
+            f"- **Character Visual Alignment**: `{report.deterministic.av_coupling.character_visual_alignment_ratio * 100:.1f}%`",
+            f"- **Max Shot Duration**: `{report.deterministic.av_coupling.max_shot_duration_seconds:.1f}s` (Pacing pass: `{report.deterministic.av_coupling.dynamic_pacing_pass}`)",
+            f"- **Coupling Status**: {report.deterministic.av_coupling.details}",
+            f"",
+            f"## 💰 Evaluator LLM Token & Cost Telemetry",
+            f"- **Total Evaluator Tokens**: **{report.total_eval_tokens}**",
+            f"- **Total Evaluator Cost**: **${report.total_eval_cost_usd:.6f} USD**",
+            f"- **Deterministic Offload**: {report.deterministic_savings_description}",
+            f"",
+            f"| Evaluator Task | Type | In Tokens | Out Tokens | Total Tokens | Cost (USD) | Cache Hit |",
+            f"| :--- | :---: | :---: | :---: | :---: | :---: | :---: |",
+        ])
+
+        for t in report.eval_telemetry:
+            eval_type = "Deterministic (0 tok)" if t.is_deterministic else "Semantic LLM"
+            md.append(
+                f"| **{t.evaluator_name}** | {eval_type} | {t.input_tokens} | {t.output_tokens} | {t.total_tokens} | ${t.cost_usd:.6f} | {t.cache_hit} |"
+            )
+
+        md.extend([
             f"",
             f"## 💡 Semantic Review & Editorial Notes",
         ])

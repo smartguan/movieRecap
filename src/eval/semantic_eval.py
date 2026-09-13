@@ -1,5 +1,5 @@
 """
-Semantic Evaluation Worker (FR-Eval).
+Semantic Evaluation Worker with LLM Token Cost Tracking (FR-Eval).
 
 Invokes the LLM gateway with strict token limits and structured rubric
 to evaluate:
@@ -16,7 +16,7 @@ from typing import Any
 
 from src.ai.gateway import LLMGateway
 from src.ai.tasks import register_all_tasks
-from src.eval.models import DimensionScore, SemanticMetrics
+from src.eval.models import DimensionScore, EvaluatorTelemetry, SemanticMetrics
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +25,7 @@ def evaluate_semantic(
     script: dict[str, Any],
     story: dict[str, Any],
     config: dict[str, Any] | None = None,
-) -> tuple[SemanticMetrics, list[DimensionScore]]:
+) -> tuple[SemanticMetrics, list[DimensionScore], EvaluatorTelemetry]:
     """
     Run semantic evaluation against the Anti-AI-Slop rubric via LLMGateway.
 
@@ -35,7 +35,7 @@ def evaluate_semantic(
         config: System configuration.
 
     Returns:
-        Tuple of (SemanticMetrics, list of DimensionScore).
+        Tuple of (SemanticMetrics, list of DimensionScore, EvaluatorTelemetry).
     """
     gateway = LLMGateway(config or {})
     register_all_tasks(gateway)
@@ -117,7 +117,7 @@ SCRIPT TO EVALUATE:
     voice_dim = DimensionScore(
         name="Authentic Mandarin Voice",
         score=voice_score,
-        weight=0.15,
+        weight=0.10,
         passed=voice_score >= 75.0,
         details="Natural Chinese video essayist tone" if voice_score >= 75.0 else "Stiff / robotic phrasing",
         findings=[],
@@ -142,4 +142,14 @@ SCRIPT TO EVALUATE:
         improvement_recommendations=parsed.get("improvement_recommendations", []),
     )
 
-    return semantic_metrics, [depth_dim, voice_dim, hook_dim]
+    telemetry = EvaluatorTelemetry(
+        evaluator_name="semantic_anti_slop_evaluator",
+        is_deterministic=False,
+        input_tokens=response.input_tokens,
+        output_tokens=response.output_tokens,
+        total_tokens=response.input_tokens + response.output_tokens,
+        cost_usd=response.estimated_cost_usd,
+        cache_hit=response.cache_hit,
+    )
+
+    return semantic_metrics, [depth_dim, voice_dim, hook_dim], telemetry
