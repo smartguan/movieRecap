@@ -94,14 +94,17 @@ class VideoAcquirerAgent:
         url: str,
         incoming_base_dir: Optional[Union[Path, str]] = None,
         max_duration: Optional[float] = None,
+        force_download: bool = False,
     ) -> AcquisitionResult:
         """
         Acquire video from URL and prepare incoming package.
+        If the movie is already downloaded and cached locally, the download is skipped.
 
         Args:
-            url: Webpage or direct stream URL.
+            url: Webpage, direct stream URL, or local incoming directory.
             incoming_base_dir: Optional custom base directory (defaults to data/incoming).
             max_duration: Optional duration limit in seconds.
+            force_download: If True, re-download even if movie is already cached.
 
         Returns:
             AcquisitionResult with file paths and metadata.
@@ -113,6 +116,33 @@ class VideoAcquirerAgent:
         )
 
         try:
+            # 0. Check if URL is an existing local directory package
+            local_path = Path(url)
+            if local_path.exists() and local_path.is_dir():
+                incoming_dir = local_path
+                source_video_path = incoming_dir / "source.mp4"
+                metadata_path = incoming_dir / "metadata.json"
+                if source_video_path.exists() and source_video_path.stat().st_size > 0:
+                    media_info = extract_media_info(source_video_path)
+                    title = incoming_dir.name
+                    if metadata_path.exists():
+                        try:
+                            meta_data = json.loads(metadata_path.read_text(encoding="utf-8"))
+                            title = meta_data.get("title", title)
+                        except Exception:
+                            pass
+                    logger.info("Using existing local movie package at: %s (download skipped)", incoming_dir)
+                    return AcquisitionResult(
+                        success=True,
+                        movie_title=title,
+                        incoming_dir=str(incoming_dir),
+                        source_video_path=str(source_video_path),
+                        metadata_path=str(metadata_path),
+                        duration_seconds=media_info.duration_seconds,
+                        file_size_bytes=source_video_path.stat().st_size,
+                        is_ready_for_recap=True,
+                    )
+
             # 1. Resolve extractor
             extractor = self.get_extractor(url)
             logger.info("Using extractor: %s for %s", extractor.__class__.__name__, url)
@@ -121,11 +151,7 @@ class VideoAcquirerAgent:
             metadata = extractor.extract_metadata(url)
             logger.info("Extracted metadata for: %s", metadata.title)
 
-            # 3. Resolve media stream
-            stream_info = extractor.resolve_stream(url)
-            logger.info("Resolved stream URL: %s", stream_info.stream_url[:60] + "...")
-
-            # 4. Prepare incoming directory
+            # 3. Prepare incoming directory
             slug = slugify_title(metadata.title)
             incoming_dir = base_dir / slug
             incoming_dir.mkdir(parents=True, exist_ok=True)
@@ -133,7 +159,42 @@ class VideoAcquirerAgent:
             source_video_path = incoming_dir / "source.mp4"
             metadata_path = incoming_dir / "metadata.json"
 
-            # 5. Download media stream deterministically
+            # 4. Check if movie is already cached/downloaded locally
+            if not force_download and source_video_path.exists() and source_video_path.stat().st_size > 0:
+                try:
+                    media_info = extract_media_info(source_video_path)
+                    if media_info.duration_seconds > 0:
+                        logger.info(
+                            "Movie '%s' already cached/downloaded at %s (duration: %.1fs). Skipping fetch/download.",
+                            metadata.title,
+                            source_video_path,
+                            media_info.duration_seconds,
+                        )
+                        metadata.duration_seconds = media_info.duration_seconds
+                        metadata.resolution = f"{media_info.resolution[0]}x{media_info.resolution[1]}"
+
+                        if not metadata_path.exists():
+                            with open(metadata_path, "w", encoding="utf-8") as f:
+                                json.dump(metadata.model_dump(), f, ensure_ascii=False, indent=2)
+
+                        return AcquisitionResult(
+                            success=True,
+                            movie_title=metadata.title,
+                            incoming_dir=str(incoming_dir),
+                            source_video_path=str(source_video_path),
+                            metadata_path=str(metadata_path),
+                            duration_seconds=media_info.duration_seconds,
+                            file_size_bytes=source_video_path.stat().st_size,
+                            is_ready_for_recap=True,
+                        )
+                except Exception as probe_err:
+                    logger.warning("Cached movie video probe failed (%s), re-downloading...", probe_err)
+
+            # 5. Resolve media stream
+            stream_info = extractor.resolve_stream(url)
+            logger.info("Resolved stream URL: %s", stream_info.stream_url[:60] + "...")
+
+            # 6. Download media stream deterministically
             self.download_stream(
                 stream_info=stream_info,
                 output_path=source_video_path,

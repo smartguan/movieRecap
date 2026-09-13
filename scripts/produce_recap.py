@@ -63,6 +63,11 @@ def main() -> int:
         default="data/projects",
         help="Workspace directory for project state and intermediate renders (default: data/projects)",
     )
+    parser.add_argument(
+        "--force-download",
+        action="store_true",
+        help="Force re-download video stream even if movie is already cached in data/incoming/",
+    )
 
     args = parser.parse_args()
 
@@ -78,7 +83,7 @@ def main() -> int:
     # Step 1: Acquire video and metadata deterministically
     print("\n[Step 1/5] Acquiring video stream & movie metadata (0 LLM tokens)...")
     acquirer = VideoAcquirerAgent()
-    acq_result = acquirer.acquire(url=args.url)
+    acq_result = acquirer.acquire(url=args.url, force_download=args.force_download)
 
     if not acq_result.success:
         print(f"❌ Acquisition failed: {acq_result.error_message}", file=sys.stderr)

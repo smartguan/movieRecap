@@ -131,3 +131,77 @@ def test_video_acquirer_agent_mocked(mock_extract_info, mock_subproc, tmp_path: 
         assert data["title"] == "Test Movie"
         assert data["duration_seconds"] == 120.5
         assert data["resolution"] == "1920x1080"
+
+
+@patch("src.acquirer.agent.extract_media_info")
+def test_video_acquirer_skips_download_if_cached(mock_extract_info, tmp_path: Path) -> None:
+    """Test that VideoAcquirerAgent skips download if source.mp4 already exists in incoming directory."""
+    mock_extract_info.return_value = MediaInfo(
+        duration_seconds=300.0,
+        resolution=(1920, 1080),
+        frame_rate=24.0,
+        video_codec="h264",
+        audio_codec="aac",
+        audio_tracks=2,
+        has_subtitles=False,
+    )
+
+    agent = VideoAcquirerAgent()
+
+    # Pre-create cached video package
+    incoming_folder = tmp_path / "Cached_Movie"
+    incoming_folder.mkdir(parents=True, exist_ok=True)
+    video_file = incoming_folder / "source.mp4"
+    video_file.write_bytes(b"existing video content")
+
+    mock_extractor = MagicMock(spec=GenericVideoExtractor)
+    mock_extractor.can_handle.return_value = True
+    mock_extractor.extract_metadata.return_value = VideoMetadata(
+        title="Cached Movie",
+        source_url="https://example.com/cached.mp4",
+    )
+    mock_extractor.resolve_stream = MagicMock()
+    agent.extractors = [mock_extractor]
+    agent.download_stream = MagicMock()
+
+    # Run acquire
+    result = agent.acquire(
+        url="https://example.com/cached.mp4",
+        incoming_base_dir=tmp_path,
+        force_download=False,
+    )
+
+    assert result.success is True
+    assert result.movie_title == "Cached Movie"
+    # download_stream and resolve_stream should NOT have been called!
+    assert agent.download_stream.call_count == 0
+    assert mock_extractor.resolve_stream.call_count == 0
+
+
+@patch("src.acquirer.agent.extract_media_info")
+def test_video_acquirer_uses_local_directory_package(mock_extract_info, tmp_path: Path) -> None:
+    """Test that VideoAcquirerAgent directly uses a local directory without downloading."""
+    mock_extract_info.return_value = MediaInfo(
+        duration_seconds=500.0,
+        resolution=(1920, 1080),
+        frame_rate=24.0,
+        video_codec="h264",
+        audio_codec="aac",
+        audio_tracks=2,
+        has_subtitles=False,
+    )
+
+    agent = VideoAcquirerAgent()
+
+    # Create local directory package
+    pkg_dir = tmp_path / "Local_Movie"
+    pkg_dir.mkdir(parents=True, exist_ok=True)
+    (pkg_dir / "source.mp4").write_bytes(b"local movie video")
+    (pkg_dir / "metadata.json").write_text(json.dumps({"title": "Local Film"}), encoding="utf-8")
+
+    result = agent.acquire(url=str(pkg_dir))
+    assert result.success is True
+    assert result.movie_title == "Local Film"
+    assert result.duration_seconds == 500.0
+    assert result.incoming_dir == str(pkg_dir)
+
