@@ -182,4 +182,57 @@ python scripts/recap_worker.py --once
 python scripts/recap_worker.py --status
 ```
 
+---
+
+## 9. 3-Stage Checkpointed Architecture & Stage Resumption Standard
+
+The entire recap production lifecycle is decoupled into **3 distinct, checkpointed stages** with persistent artifacts at each stage:
+
+```mermaid
+graph LR
+    subgraph Stage 1: Downloader
+        U[URL / Stream] --> D[stage1_download.py]
+        D --> A1["data/stages/1_download/<slug>/<br/>• source.mp4<br/>• metadata.json"]
+    end
+    
+    subgraph Stage 2: Movie Analyzer
+        A1 --> M[stage2_analyze.py]
+        M --> A2["data/stages/2_analyzed/<slug>/<br/>• scenes.json<br/>• keyframes/<br/>• audio/source_audio.wav<br/>• scene_index.json<br/>• story_understanding.json"]
+    end
+    
+    subgraph Stage 3: Recap Generator
+        A2 --> G[stage3_generate.py]
+        G --> A3["output/<slug>/ Packages<br/>• recap_youtube.mp4<br/>• recap_bilibili.mp4<br/>• metadata_youtube.json<br/>• subtitles.srt"]
+    end
+```
+
+### 9.1 Stage Artifacts & Checkpoint Storage
+| Stage | CLI Tool | Checkpoint Location | Key Artifacts | Re-run / Skip Behavior |
+|---|---|---|---|---|
+| **Stage 1 (Downloader)** | `scripts/stage1_download.py` | `data/stages/1_download/<slug>/` | `source.mp4`, `metadata.json`, `stage1_checkpoint.json` | If `source.mp4` exists, skips network download (0 bandwidth). |
+| **Stage 2 (Movie Analyzer)** | `scripts/stage2_analyze.py` | `data/stages/2_analyzed/<slug>/` | `scenes.json`, `keyframes/`, `audio/`, `scene_index.json`, `story_understanding.json` | If `story_understanding.json` and `scene_index.json` exist, skips expensive media processing & LLM story analysis (0 tokens, 0s). |
+| **Stage 3 (Recap Generator)** | `scripts/stage3_generate.py` | `output/<slug>/` & `data/stages/3_generated/` | `script.json`, `voice_assets/`, `edit_plan.json`, 1080p MP4s, subtitle tracks, QA reports | Can generate multiple alternative cuts (e.g. 3-min vs 15-min) in seconds without redoing Stage 1 or Stage 2. |
+
+### 9.2 Stage Slicing & Resumption Usage
+```bash
+# Run complete end-to-end pipeline (Stages 1 -> 3)
+python scripts/pipeline.py "https://www.yfsp.tv/play/MKQPsLuGSE5"
+
+# Run only Stage 1 (Download only)
+python scripts/stage1_download.py "https://www.yfsp.tv/play/MKQPsLuGSE5"
+
+# Run only Stage 2 (Analyze already downloaded movie)
+python scripts/stage2_analyze.py 诅咒
+
+# Run only Stage 3 (Generate custom 3-minute recap cut using Stage 2 analysis)
+python scripts/stage3_generate.py 诅咒 --target-duration 3.0
+
+# Run only Stage 3 (Generate 15-minute extended cut using same Stage 2 analysis)
+python scripts/stage3_generate.py 诅咒 --target-duration 15.0
+
+# Pipeline slicing CLI
+python scripts/pipeline.py 诅咒 --from-stage 2 --to-stage 3 --target-duration 5.0
+```
+
+
 
