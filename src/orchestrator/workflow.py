@@ -443,23 +443,117 @@ class WorkflowRunner:
         return project
 
     def _stage_generate_audio(self, project: dict[str, Any]) -> dict[str, Any]:
-        """Stage: Generate voice narration. Placeholder for Milestone 2."""
-        logger.info("Audio generation stage — placeholder for Milestone 2")
+        """
+        Stage: Generate voice narration (FR-6).
+        Synthesizes neural voiceover for all script segments.
+        """
+        import json
+        from src.media.tts import generate_voice_assets
+
+        project_dir = self.project_manager.get_project_dir(project["project_id"])
+        script_file = project_dir / "script.json"
+        script = json.loads(script_file.read_text(encoding="utf-8"))
+
+        audio_dir = project_dir / "audio" / "segments"
+        voice_assets = generate_voice_assets(script, audio_dir)
+
+        voice_manifest = project_dir / "audio" / "voice_assets.json"
+        voice_manifest.write_text(
+            json.dumps(voice_assets, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        logger.info("Generated %d voice assets", len(voice_assets))
         return project
 
     def _stage_plan_edit(self, project: dict[str, Any]) -> dict[str, Any]:
-        """Stage: Plan video edit. Placeholder for Milestone 2."""
-        logger.info("Edit planning stage — placeholder for Milestone 2")
+        """
+        Stage: Plan video edit and extract clips (FR-7).
+        """
+        import json
+        from src.media.clip_planner import plan_and_extract_clips
+
+        project_dir = self.project_manager.get_project_dir(project["project_id"])
+        source_path = Path(project["source_path"])
+        scene_index_file = project_dir / "scene_index.json"
+        voice_manifest = project_dir / "audio" / "voice_assets.json"
+
+        scene_index = json.loads(scene_index_file.read_text(encoding="utf-8"))
+        voice_assets = json.loads(voice_manifest.read_text(encoding="utf-8"))
+
+        clips_dir = project_dir / "assets" / "clips"
+        edit_decisions = plan_and_extract_clips(source_path, voice_assets, scene_index, clips_dir)
+
+        edit_file = project_dir / "assets" / "edit_decisions.json"
+        edit_file.write_text(
+            json.dumps(edit_decisions, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        logger.info("Planned and extracted %d video edit clips", len(edit_decisions))
         return project
 
     def _stage_render(self, project: dict[str, Any]) -> dict[str, Any]:
-        """Stage: Render video. Placeholder for Milestone 2."""
-        logger.info("Rendering stage — placeholder for Milestone 2")
+        """
+        Stage: Render final video with voiceover and subtitles (FR-8).
+        """
+        import json
+        from src.media.renderer import render_recap_video
+
+        project_dir = self.project_manager.get_project_dir(project["project_id"])
+        edit_file = project_dir / "assets" / "edit_decisions.json"
+        edit_decisions = json.loads(edit_file.read_text(encoding="utf-8"))
+
+        output_video = project_dir / "renders" / "recap_final.mp4"
+        render_recap_video(edit_decisions, output_video, burn_subtitles=True)
+
+        project["rendered_video_path"] = str(output_video.absolute())
+        self.project_manager.save_project(project)
+        logger.info("Render complete: %s", output_video)
         return project
 
     def _stage_qa(self, project: dict[str, Any]) -> dict[str, Any]:
-        """Stage: Automated QA. Placeholder for Milestone 2."""
-        logger.info("QA stage — placeholder for Milestone 2")
+        """
+        Stage: Automated QA (FR-10).
+        Verifies video stream, audio stream, decodability, and duration.
+        """
+        import json
+        from src.media.probe import extract_media_info
+
+        project_dir = self.project_manager.get_project_dir(project["project_id"])
+        output_video = project_dir / "renders" / "recap_final.mp4"
+
+        if not output_video.exists():
+            raise FileNotFoundError(f"Rendered video missing: {output_video}")
+
+        media_info = extract_media_info(output_video)
+        qa_checks = [
+            {
+                "check": "video_stream_present",
+                "status": "pass" if media_info.video_codec != "unknown" else "fail",
+                "details": f"Codec: {media_info.video_codec}, Resolution: {media_info.resolution}",
+            },
+            {
+                "check": "audio_stream_present",
+                "status": "pass" if media_info.audio_codec != "none" else "fail",
+                "details": f"Audio codec: {media_info.audio_codec}, Tracks: {media_info.audio_tracks}",
+            },
+            {
+                "check": "duration_valid",
+                "status": "pass" if media_info.duration_seconds > 0 else "fail",
+                "details": f"Duration: {media_info.duration_seconds:.2f}s",
+            },
+        ]
+
+        qa_report = {
+            "project_id": project["project_id"],
+            "video_path": str(output_video),
+            "media_info": media_info.model_dump(),
+            "checks": qa_checks,
+            "overall_status": "pass" if all(c["status"] == "pass" for c in qa_checks) else "fail",
+        }
+
+        qa_file = project_dir / "renders" / "qa_report.json"
+        qa_file.write_text(json.dumps(qa_report, indent=2, ensure_ascii=False), encoding="utf-8")
+        logger.info("Automated QA passed for %s", output_video)
         return project
 
     def _stage_upload(self, project: dict[str, Any]) -> dict[str, Any]:

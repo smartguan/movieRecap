@@ -34,6 +34,9 @@ def test_workflow_process_incoming(mock_ingest, tmp_path):
     new_projects_second = runner.process_incoming()
     assert len(new_projects_second) == 0
 
+@patch("src.media.renderer.render_recap_video")
+@patch("src.media.clip_planner.plan_and_extract_clips")
+@patch("src.media.tts.generate_voice_assets")
 @patch("src.media.probe.extract_media_info")
 @patch("src.media.audio.extract_audio")
 @patch("src.media.scene_detect.detect_scenes")
@@ -42,7 +45,7 @@ def test_workflow_process_incoming(mock_ingest, tmp_path):
 @patch("src.ai.script.generate_script")
 @patch("src.ai.verify.verify_script")
 def test_workflow_run_project_milestone1(
-    mock_verify, mock_script, mock_story, mock_keyframes, mock_detect, mock_audio, mock_probe, tmp_path
+    mock_verify, mock_script, mock_story, mock_keyframes, mock_detect, mock_audio, mock_probe, mock_tts, mock_clips, mock_render, tmp_path
 ):
     projects = tmp_path / "projects"
     incoming = tmp_path / "incoming"
@@ -58,15 +61,17 @@ def test_workflow_run_project_milestone1(
         title="Spike Movie"
     )
     
-    mock_probe.return_value = {
-        "duration_seconds": 100.0,
-        "resolution": (1920, 1080),
-        "frame_rate": 24.0,
-        "video_codec": "h264",
-        "audio_codec": "aac",
-        "audio_tracks": 1,
-        "has_subtitles": False
-    }
+    from src.models.project import MediaInfo
+    media_info_inst = MediaInfo(
+        duration_seconds=100.0,
+        resolution=(1920, 1080),
+        frame_rate=24.0,
+        video_codec="h264",
+        audio_codec="aac",
+        audio_tracks=1,
+        has_subtitles=False
+    )
+    mock_probe.return_value = media_info_inst
     mock_detect.return_value = [(0.0, 10.0), (10.0, 20.0)]
     mock_story.return_value = {
         "title": "Spike Movie",
@@ -85,8 +90,21 @@ def test_workflow_run_project_milestone1(
         "warnings": 0,
         "findings": []
     }
+    mock_tts.return_value = [
+        {"segment_id": "seg-1", "text": "开场白", "audio_file": "/tmp/a.mp3", "start_time": 0.0, "duration": 5.0, "end_time": 5.0}
+    ]
+    mock_clips.return_value = [
+        {"segment_id": "seg-1", "clip_file": "/tmp/c.mp4", "audio_file": "/tmp/a.mp3", "timeline_start": 0.0, "timeline_end": 5.0}
+    ]
     
-    # Run project through Milestone 1 pipeline
+    def side_effect_render(decisions, out_path, **kwargs):
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_bytes(b"dummy mp4")
+        return out_path
+        
+    mock_render.side_effect = side_effect_render
+    
+    # Run project through Milestone 1 & 2 pipeline
     result = runner.run_project(project["project_id"])
     
     # Should progress through INGESTING -> ANALYZING -> SCRIPTING -> GENERATING_AUDIO -> etc.
