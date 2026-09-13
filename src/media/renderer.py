@@ -110,7 +110,11 @@ def render_recap_video(
     generate_recap_subtitles(edit_decisions, srt_file)
 
     # 6. Final multiplexing and subtitle integration
-    # Try burn-in using relative filename in cwd=render_dir
+    # Render to an atomic temporary staging file first so readers never see partial/truncated streams
+    temp_render_output = render_dir / f".tmp_{output_video_path.name}"
+    if temp_render_output.exists():
+        temp_render_output.unlink()
+
     rendered = False
     if burn_subtitles:
         try:
@@ -126,7 +130,7 @@ def render_recap_video(
                 "-c:a", "aac",
                 "-b:a", "192k",
                 "-shortest",
-                str(output_video_path.resolve()),
+                str(temp_render_output.resolve()),
             ]
             subprocess.run(cmd_burn, cwd=render_dir, capture_output=True, text=True, check=True)
             rendered = True
@@ -149,9 +153,17 @@ def render_recap_video(
             "-c:s", "mov_text",
             "-metadata:s:s:0", "language=chi",
             "-shortest",
-            str(output_video_path),
+            str(temp_render_output),
         ]
         subprocess.run(cmd_soft, capture_output=True, text=True, check=True)
+
+    # 7. Validate that temp render file exists, is non-empty, and finalized
+    if not temp_render_output.exists() or temp_render_output.stat().st_size == 0:
+        raise RuntimeError(f"Rendering failed: staging file {temp_render_output} was not created")
+
+    # 8. Atomically replace destination path
+    temp_render_output.replace(output_video_path)
+    logger.info("Atomically finalized rendered recap to %s (%d bytes)", output_video_path, output_video_path.stat().st_size)
 
     # Clean up intermediate files
     for temp in [raw_video, raw_audio, concat_list_file, audio_concat_file]:
@@ -159,3 +171,49 @@ def render_recap_video(
             temp.unlink()
 
     return output_video_path
+
+
+def export_recap_assets(
+    project_dir: Path,
+    movie_title: str,
+    output_dir: Path,
+) -> tuple[Path, Path]:
+    """
+    Atomically export finalized recap video and subtitles to the public output folder.
+
+    Guarantees no external process sees a partially copied/truncated video.
+
+    Args:
+        project_dir: Path to project directory.
+        movie_title: Name of the movie for clean naming.
+        output_dir: Public output directory (e.g. data/output or output/).
+
+    Returns:
+        Tuple of (exported_video_path, exported_subtitle_path).
+    """
+    import shutil
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    src_video = project_dir / "renders" / "recap_final.mp4"
+    src_srt = project_dir / "renders" / "recap_subtitles.srt"
+
+    if not src_video.exists():
+        raise FileNotFoundError(f"Source recap video not found for export: {src_video}")
+
+    safe_title = "".join(c if c.isalnum() or c in ("-", "_") else "_" for c in movie_title).strip("_") or "Recap"
+    dest_video = output_dir / f"{safe_title}_Recap.mp4"
+    dest_srt = output_dir / f"{safe_title}_Recap.srt"
+
+    # Atomic copy for video: copy to .tmp first, then atomic replace
+    tmp_video = output_dir / f".tmp_{dest_video.name}"
+    shutil.copy2(src_video, tmp_video)
+    tmp_video.replace(dest_video)
+
+    # Copy subtitles if present
+    if src_srt.exists():
+        tmp_srt = output_dir / f".tmp_{dest_srt.name}"
+        shutil.copy2(src_srt, tmp_srt)
+        tmp_srt.replace(dest_srt)
+
+    logger.info("Atomically exported recap video to %s (%d bytes)", dest_video, dest_video.stat().st_size)
+    return dest_video, dest_srt

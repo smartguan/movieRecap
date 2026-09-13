@@ -554,6 +554,26 @@ class WorkflowRunner:
         qa_file = project_dir / "renders" / "qa_report.json"
         qa_file.write_text(json.dumps(qa_report, indent=2, ensure_ascii=False), encoding="utf-8")
         logger.info("Automated QA passed for %s", output_video)
+
+        # 1. Atomically export verified recap assets to public output directory
+        from src.media.renderer import export_recap_assets
+        public_output_dir = Path(self.config.get("paths", {}).get("output_dir", "output"))
+        export_recap_assets(
+            project_dir=project_dir,
+            movie_title=project.get("title", "Recap"),
+            output_dir=public_output_dir,
+        )
+
+        # 2. Automatically generate and persist Token & Cost Profile
+        try:
+            from src.ai.profiler import TokenCostProfiler
+            profiler = TokenCostProfiler(projects_dir=self.project_manager.projects_dir)
+            profile = profiler.profile_project(project["project_id"])
+            profiler.save_profile_report(profile, project_dir)
+            logger.info("Saved token & cost profile to %s", project_dir)
+        except Exception as e:
+            logger.warning("Failed to generate token cost profile in QA stage: %s", e)
+
         return project
 
     def _stage_upload(self, project: dict[str, Any]) -> dict[str, Any]:
