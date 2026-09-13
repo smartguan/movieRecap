@@ -1,20 +1,20 @@
 """
 Story understanding module (FR-3).
 
-Implements hierarchical processing to minimize token usage:
+Implements hierarchical processing and fetcher metadata synergy to minimize token usage:
 1. Deterministically segment transcript and scene data (done upstream in index/).
-2. Create bounded semantic summaries for local scene sequences via LLM.
-3. Extract characters, events, and relationships via LLM.
-4. Assemble the global story understanding (deterministic merge + LLM synthesis).
-
-Only relevant summaries and evidence spans are sent to the LLM — never the
-full transcript or all frames.
+2. Leverage structured metadata (synopsis, cast, genre) from Video Acquirer Agent to avoid blind LLM exploration.
+3. Deterministically handle silent/dialogue-free scene chunks with 0 LLM tokens.
+4. Pre-seed character registry from fetcher cast & synopsis.
+5. Create compact bounded semantic summaries for active dialogue sequences.
+6. Assemble global story understanding via compact token-dense representations.
 """
 
 from __future__ import annotations
 import json
 import logging
-from typing import Any
+import re
+from typing import Any, Dict, List, Optional
 
 from src.ai.gateway import LLMGateway
 from src.ai.tasks import register_all_tasks
@@ -31,13 +31,14 @@ def understand_story(
     config: dict[str, Any],
 ) -> dict[str, Any]:
     """
-    Build a complete story understanding from the scene index.
+    Build a complete story understanding from the scene index and project metadata.
 
-    Uses hierarchical processing:
-    1. Chunk scenes into groups of CHUNK_SIZE
-    2. Generate local summaries for each chunk (LLM)
-    3. Extract characters and relationships (LLM)
-    4. Synthesize global story understanding (LLM)
+    Uses hierarchical processing & fetcher metadata synergy:
+    1. Extract known metadata (synopsis, stars, genre) from fetcher
+    2. Chunk scenes into groups of CHUNK_SIZE
+    3. Generate local summaries (skipping silent chunks deterministically)
+    4. Extract/seed characters and relationships
+    5. Synthesize global story understanding
 
     Args:
         project: Project data dict.
@@ -52,15 +53,16 @@ def understand_story(
 
     scenes = scene_index.get("scenes", [])
     title = project.get("title", "Unknown Movie")
+    metadata = project.get("metadata", {})
 
-    # Step 1: Create local summaries for scene chunks (SEMANTIC)
-    local_summaries = _create_local_summaries(gateway, scenes, title)
+    # Step 1: Create local summaries for scene chunks (SEMANTIC with deterministic gating)
+    local_summaries = _create_local_summaries(gateway, scenes, title, metadata)
 
-    # Step 2: Extract characters (SEMANTIC)
-    characters = _extract_characters(gateway, local_summaries, title)
+    # Step 2: Extract / Seed characters using fetcher metadata (DETERMINISTIC seeding + SEMANTIC refinement)
+    characters = _extract_characters(gateway, local_summaries, title, metadata)
 
-    # Step 3: Synthesize global story (SEMANTIC)
-    story = _synthesize_story(gateway, local_summaries, characters, title)
+    # Step 3: Synthesize global story (SEMANTIC with token-optimized context)
+    story = _synthesize_story(gateway, local_summaries, characters, title, metadata)
 
     # Save the gateway telemetry
     story["telemetry"] = gateway.get_telemetry()
@@ -72,40 +74,76 @@ def _create_local_summaries(
     gateway: LLMGateway,
     scenes: list[dict[str, Any]],
     title: str,
+    metadata: Optional[dict[str, Any]] = None,
 ) -> list[dict[str, Any]]:
     """
     Create bounded local summaries for chunks of scenes.
-
-    Each chunk gets a summary via the LLM, using only the transcript text
-    and basic metadata from that chunk — not the full movie.
+    Skips dialogue-free chunks deterministically to save 100% LLM tokens on non-dialogue scenes.
 
     Args:
         gateway: LLM gateway instance.
         scenes: List of scene dicts from the scene index.
         title: Movie title for context.
+        metadata: Optional metadata from fetcher agent.
 
     Returns:
         List of local summary dicts.
     """
     summaries = []
     chunks = [scenes[i : i + CHUNK_SIZE] for i in range(0, len(scenes), CHUNK_SIZE)]
+    meta = metadata or {}
+    synopsis = meta.get("synopsis", "").strip()
+    synopsis_snippet = f" | 背景: {synopsis[:120]}..." if synopsis else ""
 
     for chunk_idx, chunk in enumerate(chunks):
-        # Build compact context from this chunk only
+        # 1. Deterministic Token Optimization: Check if chunk has any dialogue
+        non_empty_transcripts = [
+            s.get("transcript_text", "").strip()
+            for s in chunk
+            if s.get("transcript_text", "").strip()
+        ]
+
+        time_range_str = (
+            f"{chunk[0]['start_seconds']:.1f}s - {chunk[-1]['end_seconds']:.1f}s"
+        )
+
+        if not non_empty_transcripts:
+            # Chunk is silent / action-only: assemble deterministic summary with 0 LLM tokens
+            logger.info(
+                "Chunk %d/%d is dialogue-free; generating deterministic summary (0 tokens)",
+                chunk_idx + 1,
+                len(chunks),
+            )
+            summaries.append({
+                "section_index": chunk_idx,
+                "time_range": time_range_str,
+                "events": [
+                    {
+                        "description": f"画面转场与背景镜头 ({time_range_str})",
+                        "characters": [],
+                        "timestamp_seconds": chunk[0]["start_seconds"],
+                        "event_type": "exposition",
+                        "confidence": 1.0,
+                    }
+                ],
+                "characters_seen": [],
+                "emotional_tone": "过渡/平静",
+                "key_dialogue": [],
+                "summary": f"该时间段 ({time_range_str}) 主要是无对白背景与场景镜头过渡。",
+            })
+            continue
+
+        # 2. Build compact context from this chunk only
         context_lines = []
         for scene in chunk:
-            time_range = (
-                f"{scene['start_seconds']:.1f}s - {scene['end_seconds']:.1f}s"
-            )
+            time_range = f"{scene['start_seconds']:.1f}s - {scene['end_seconds']:.1f}s"
             transcript = scene.get("transcript_text", "").strip()
             if transcript:
                 context_lines.append(f"[{time_range}] {transcript}")
-            else:
-                context_lines.append(f"[{time_range}] (no dialogue)")
 
         context = "\n".join(context_lines)
 
-        prompt = f"""Analyze the following section (part {chunk_idx + 1} of {len(chunks)}) of the movie "{title}".
+        prompt = f"""Analyze section {chunk_idx + 1}/{len(chunks)} of "{title}"{synopsis_snippet}.
 
 Based on the transcript below, identify:
 1. Key events that happen in this section
@@ -116,18 +154,18 @@ Based on the transcript below, identify:
 Respond in JSON format:
 {{
   "section_index": {chunk_idx},
-  "time_range": "{chunk[0]['start_seconds']:.1f}s - {chunk[-1]['end_seconds']:.1f}s",
+  "time_range": "{time_range_str}",
   "events": [
     {{
       "description": "what happened",
       "characters": ["character names"],
       "timestamp_seconds": 0.0,
       "event_type": "setup|conflict|turning_point|climax|resolution|exposition",
-      "confidence": 0.0
+      "confidence": 0.9
     }}
   ],
-  "characters_seen": ["list of character names in this section"],
-  "emotional_tone": "description of the mood",
+  "characters_seen": ["list of character names"],
+  "emotional_tone": "mood",
   "key_dialogue": ["important lines"],
   "summary": "2-3 sentence summary of this section"
 }}"""
@@ -142,7 +180,11 @@ Respond in JSON format:
             project_id="",
         )
 
-        summary = response.parsed or {"section_index": chunk_idx, "summary": response.content}
+        summary = response.parsed or {
+            "section_index": chunk_idx,
+            "time_range": time_range_str,
+            "summary": response.content,
+        }
         summaries.append(summary)
 
         logger.info(
@@ -160,45 +202,65 @@ def _extract_characters(
     gateway: LLMGateway,
     local_summaries: list[dict[str, Any]],
     title: str,
-) -> list[dict[str, Any]]:
+    metadata: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
     """
-    Extract and consolidate characters from local summaries.
+    Extract and consolidate characters using fetcher metadata synergy.
+    If fetcher provides cast and synopsis, pre-seeds character registry deterministically.
 
     Args:
         gateway: LLM gateway instance.
         local_summaries: Local summaries from each chunk.
         title: Movie title.
+        metadata: Metadata extracted by fetcher agent.
 
     Returns:
-        List of character dicts with names, aliases, and relationships.
+        Dict with characters and relationships.
     """
+    meta = metadata or {}
+    stars = meta.get("stars", [])
+    synopsis = meta.get("synopsis", "")
+
     # Collect all character mentions from local summaries (DETERMINISTIC)
     all_characters = set()
     for summary in local_summaries:
         for char in summary.get("characters_seen", []):
-            all_characters.add(char)
+            if char:
+                all_characters.add(char)
 
-    # Prepare compact context — only character-relevant info
+    # 1. Deterministic Token Optimization: If no characters in summaries and stars are known
+    if not all_characters and stars:
+        logger.info("Using fetcher stars to construct deterministic character registry (0 tokens)")
+        char_list = [
+            {
+                "name": star,
+                "aliases": [],
+                "description": "主要角色/主演",
+                "first_appearance_seconds": 0.0,
+            }
+            for star in stars
+        ]
+        return {"characters": char_list, "relationships": []}
+
+    # Prepare compact context — only character-relevant info + fetcher hints
     context_lines = []
+    if stars:
+        context_lines.append(f"Official Cast/Stars: {', '.join(stars)}")
+    if synopsis:
+        context_lines.append(f"Official Synopsis: {synopsis}")
+
     for summary in local_summaries:
         section_summary = summary.get("summary", "")
         chars = summary.get("characters_seen", [])
-        if chars:
+        if chars or section_summary:
+            char_str = f"Characters: {', '.join(chars)}. " if chars else ""
             context_lines.append(
-                f"Section {summary.get('section_index', '?')}: "
-                f"Characters: {', '.join(chars)}. {section_summary}"
+                f"Section {summary.get('section_index', '?')}: {char_str}{section_summary}"
             )
 
     context = "\n".join(context_lines)
 
-    prompt = f"""Given the following section summaries from the movie "{title}", create a character registry.
-
-For each character, provide:
-- Their main name
-- Any aliases or alternate names used
-- A brief description of who they are
-- Their first appearance (approximate timestamp)
-- Key relationships with other characters
+    prompt = f"""Given the section summaries and cast hints for the movie "{title}", create a consolidated character registry.
 
 Respond in JSON format:
 {{
@@ -206,7 +268,7 @@ Respond in JSON format:
     {{
       "name": "main name",
       "aliases": ["other names used"],
-      "description": "who they are and their role",
+      "description": "role and identity",
       "first_appearance_seconds": 0.0
     }}
   ],
@@ -214,8 +276,8 @@ Respond in JSON format:
     {{
       "character_a": "name",
       "character_b": "name",
-      "relationship_type": "type (spouse, rival, colleague, etc.)",
-      "description": "nature of the relationship"
+      "relationship_type": "type",
+      "description": "relationship nature"
     }}
   ]
 }}"""
@@ -226,7 +288,21 @@ Respond in JSON format:
         context=context,
     )
 
-    return response.parsed or {"characters": [], "relationships": []}
+    parsed = response.parsed or {"characters": [], "relationships": []}
+
+    # If LLM didn't return characters but fetcher stars exist, merge them deterministically
+    if not parsed.get("characters") and stars:
+        parsed["characters"] = [
+            {
+                "name": star,
+                "aliases": [],
+                "description": "主要角色/主演",
+                "first_appearance_seconds": 0.0,
+            }
+            for star in stars
+        ]
+
+    return parsed
 
 
 def _synthesize_story(
@@ -234,43 +310,50 @@ def _synthesize_story(
     local_summaries: list[dict[str, Any]],
     characters: Any,
     title: str,
+    metadata: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     """
-    Synthesize a global story understanding from local summaries and characters.
+    Synthesize a global story understanding using compact token-optimized context.
 
     Args:
         gateway: LLM gateway instance.
         local_summaries: All local summaries.
         characters: Character registry.
         title: Movie title.
+        metadata: Optional fetcher metadata.
 
     Returns:
         Complete story understanding dict.
     """
-    # Build compact context from summaries (NOT full transcript)
+    meta = metadata or {}
+    synopsis = meta.get("synopsis", "")
+    genre = meta.get("genre", "")
+
+    # Build high-density compact context
+    context_lines = []
+    if genre:
+        context_lines.append(f"GENRE: {genre}")
+    if synopsis:
+        context_lines.append(f"OFFICIAL SYNOPSIS: {synopsis}")
+
+    # Compact character list
+    if isinstance(characters, dict) and characters.get("characters"):
+        char_strs = [
+            f"- {c.get('name')}: {c.get('description', '')}"
+            for c in characters.get("characters", [])
+        ]
+        context_lines.append("CHARACTERS:\n" + "\n".join(char_strs))
+
     summary_lines = []
-    all_events = []
     for summary in local_summaries:
         time_range = summary.get("time_range", "?")
         section_summary = summary.get("summary", "")
         summary_lines.append(f"[{time_range}] {section_summary}")
 
-        for event in summary.get("events", []):
-            all_events.append(event)
+    context_lines.append("SECTION SUMMARIES:\n" + "\n".join(summary_lines))
+    context = "\n\n".join(context_lines)
 
-    context = (
-        f"CHARACTER REGISTRY:\n{json.dumps(characters, ensure_ascii=False, indent=2)}\n\n"
-        f"SECTION SUMMARIES:\n" + "\n".join(summary_lines)
-    )
-
-    prompt = f"""Based on the section summaries and character registry for the movie "{title}", create a complete story understanding.
-
-Provide:
-1. A chronological event timeline with the most important events
-2. The major conflict and its development
-3. The climax and resolution
-4. Key themes and takeaways
-5. Any ambiguities or uncertain elements
+    prompt = f"""Based on the section summaries, character list, and official synopsis for "{title}", synthesize the complete story understanding.
 
 Respond in JSON format:
 {{
@@ -281,18 +364,18 @@ Respond in JSON format:
       "description": "what happened",
       "characters": ["character names"],
       "timestamp_seconds": 0.0,
-      "evidence_timestamps": [[start, end]],
-      "confidence": 0.0,
+      "evidence_timestamps": [[0.0, 10.0]],
+      "confidence": 0.95,
       "event_type": "conflict|turning_point|climax|resolution|setup|exposition"
     }}
   ],
-  "major_conflict": "description of the central conflict",
-  "climax": "description of the climax",
-  "resolution": "how it resolves",
-  "themes": ["key themes"],
-  "locations": ["main locations"],
-  "ambiguities": ["things that are unclear"],
-  "one_sentence_summary": "single sentence describing the movie"
+  "major_conflict": "central conflict",
+  "climax": "climax description",
+  "resolution": "resolution description",
+  "themes": ["themes"],
+  "locations": ["locations"],
+  "ambiguities": [],
+  "one_sentence_summary": "single concise sentence"
 }}"""
 
     response = gateway.invoke(

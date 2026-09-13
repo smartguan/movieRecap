@@ -37,6 +37,25 @@ class VideoMetadata(BaseModel):
     )
     extra: Dict[str, Any] = Field(default_factory=dict)
 
+    def to_token_optimized_summary(self) -> str:
+        """
+        Produce a high-density, minimal-token context string for downstream LLMs.
+        Ensures maximum semantic signal with minimum token overhead.
+        """
+        parts = [f"Title: {self.title}"]
+        if self.genre:
+            parts.append(f"Genre: {self.genre}")
+        if self.year:
+            parts.append(f"Year: {self.year}")
+        if self.directors:
+            parts.append(f"Director: {', '.join(self.directors)}")
+        if self.stars:
+            parts.append(f"Cast: {', '.join(self.stars)}")
+        if self.synopsis:
+            clean_synopsis = " ".join(self.synopsis.split())
+            parts.append(f"Synopsis: {clean_synopsis}")
+        return " | ".join(parts)
+
 
 class AcquisitionResult(BaseModel):
     success: bool

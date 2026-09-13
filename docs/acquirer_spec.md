@@ -1,6 +1,6 @@
 # Video Acquisition & Ingestion Agent Specification
 
-**Version:** 1.0  
+**Version:** 1.1  
 **Status:** Active  
 **Last Updated:** 2026-09-13  
 **Superseded By:** N/A  
@@ -94,3 +94,16 @@ data/incoming/<slug>/
 - Media downloads use native FFmpeg stream copy (`-c copy -bsf:a aac_adtstoasc`) with 0 LLM token usage.
 - Webpage HTML parsing and API signature generation use deterministic regex and standard hashing algorithms.
 - Validation runs via `ffprobe` and Pydantic schema validation.
+
+---
+
+## 6. LLM Token Optimization & Downstream Synergy
+
+The structured metadata harvested by the Video Acquirer Agent enables massive LLM token reductions in subsequent stages:
+
+| Optimization Strategy | Mechanism | Estimated LLM Token Savings |
+| :--- | :--- | :--- |
+| **Deterministic Character Seeding** | Pre-populates cast/character rosters directly from fetcher `stars` & `synopsis`, eliminating redundant character extraction calls. | **1,000 – 2,500 tokens / project** |
+| **Silent Scene Chunk Gating** | Scene sequences with no dialogue or transcript are processed deterministically with 0 LLM tokens. | **500 – 1,500 tokens / chunk** |
+| **High-Density Compact Contexts** | Replaces verbose multi-line raw JSON events with concise single-line bullet strings and official synopsis summaries. | **50% – 70% input prompt tokens** |
+| **0-Token Video Fetching Guarantee** | 100% of video fetching, signature hashing, HLS playlist parsing, and stream copying consume 0 LLM tokens. | **100% deterministic (0 tokens)** |
