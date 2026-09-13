@@ -54,7 +54,54 @@ def evaluate_deterministic(
 
     hard_failures: list[str] = []
 
-    # 1. Cleanliness Gate (Hard Gate - 10% weight)
+    # 0. Target Movie Title and Identity Isolation Gate (Hard Gate - 10% weight)
+    raw_title = (
+        (story.get("movie_title") if story else "")
+        or (story.get("title") if story else "")
+        or script.get("title", "")
+        or script.get("movie_title", "")
+        or ""
+    )
+    import re
+    from src.ai.verify import KNOWN_MOVIE_SIGNATURES, is_same_movie
+
+    target_title = re.sub(r'["“《”》\s]', '', raw_title)
+    contaminated_entities: list[str] = []
+
+    if target_title:
+        for movie_name, signatures in KNOWN_MOVIE_SIGNATURES.items():
+            if not is_same_movie(target_title, movie_name, signatures):
+                matched_sigs = [sig for sig in signatures if sig in full_text]
+                if matched_sigs:
+                    contaminated_entities.extend(matched_sigs)
+                    hard_failures.append(
+                        f"Cross-movie contamination: '{movie_name}' signatures {matched_sigs} found in recap for '{target_title}'"
+                    )
+
+    if segments and target_title:
+        first_text = segments[0].get("text", "")
+        hook_titles = re.findall(r'《([^》]+)》', first_text)
+        for ht in hook_titles:
+            clean_ht = re.sub(r'[\s]', '', ht)
+            if clean_ht and (clean_ht not in target_title and target_title not in clean_ht):
+                hard_failures.append(f"Hook introduces mismatched title 《{ht}》 instead of 《{target_title}》")
+                contaminated_entities.append(f"Mismatched title: 《{ht}》")
+
+    movie_identity_pass = len(contaminated_entities) == 0
+    movie_id_score = 100.0 if movie_identity_pass else 0.0
+
+    movie_id_dim = DimensionScore(
+        name="Movie Identity & Anti-Contamination",
+        score=movie_id_score,
+        weight=0.10,
+        passed=movie_identity_pass,
+        details=f"Movie identity isolated for '{target_title or 'target'}'"
+        if movie_identity_pass
+        else f"Contaminated with foreign movie markers: {contaminated_entities}",
+        findings=contaminated_entities,
+    )
+
+    # 1. Cleanliness Gate (Hard Gate - 5% weight)
     json_leaks = ['"text":', '"segments":', '"supporting_scenes":', '"confidence":', "```", "{", "}", "_"]
     leaks_found = []
     for i, seg in enumerate(segments):
@@ -72,7 +119,7 @@ def evaluate_deterministic(
     clean_dim = DimensionScore(
         name="Cleanliness & Formatting",
         score=cleanliness_score,
-        weight=0.10,
+        weight=0.05,
         passed=cleanliness_score == 100.0,
         details="No raw JSON, code fences, or punctuation leaks detected"
         if cleanliness_score == 100.0
@@ -80,7 +127,7 @@ def evaluate_deterministic(
         findings=leaks_found,
     )
 
-    # 2. Lexical Diversity & Cliché Scan (15% weight)
+    # 2. Lexical Diversity & Cliché Scan (10% weight)
     lex_metrics = calculate_lexical_diversity(full_text)
     cliche_matches = scan_for_cliches(full_text)
     repeated = find_repeated_phrases(full_text, ngram_size=5, min_count=3)
@@ -101,7 +148,7 @@ def evaluate_deterministic(
     diversity_dim = DimensionScore(
         name="Lexical Diversity & Cliché Avoidance",
         score=diversity_score,
-        weight=0.15,
+        weight=0.10,
         passed=diversity_score >= 70.0,
         details=f"TTR={lex_metrics['ttr']:.2f}, Distinct-2={lex_metrics['distinct_2']:.2f}, Clichés={len(cliche_matches)}",
         findings=diversity_findings,
@@ -250,6 +297,8 @@ def evaluate_deterministic(
 
     metrics = DeterministicMetrics(
         cleanliness_score=cleanliness_score,
+        movie_identity_pass=movie_identity_pass,
+        contaminated_entities=contaminated_entities,
         lexical_diversity_ttr=lex_metrics["ttr"],
         distinct_2_grams=lex_metrics["distinct_2"],
         distinct_3_grams=lex_metrics["distinct_3"],
@@ -272,4 +321,4 @@ def evaluate_deterministic(
         cache_hit=False,
     )
 
-    return metrics, [clean_dim, diversity_dim, evidence_dim, av_coupling_dim, pacing_dim], telemetry
+    return metrics, [movie_id_dim, clean_dim, diversity_dim, evidence_dim, av_coupling_dim, pacing_dim], telemetry

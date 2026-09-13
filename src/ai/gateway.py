@@ -232,7 +232,7 @@ class LLMGateway:
 
         # 3. Build cache key and check cache
         full_prompt = f"{prompt}\n\n{context}" if context else prompt
-        cache_key = self._cache_key(task_name, full_prompt)
+        cache_key = self._cache_key(task_name, full_prompt, project_id=project_id)
 
         if self.cache_enabled and task.cacheable:
             cached = self._cache_get(cache_key)
@@ -604,9 +604,9 @@ class LLMGateway:
         output_cost = (output_tokens / 1_000_000) * costs["output"]
         return round(input_cost + output_cost, 6)
 
-    def _cache_key(self, task_name: str, prompt: str) -> str:
-        """Generate a cache key from task name and prompt."""
-        content = f"{task_name}:{prompt}"
+    def _cache_key(self, task_name: str, prompt: str, project_id: str = "") -> str:
+        """Generate a cache key from task name, prompt, and optional project_id."""
+        content = f"{project_id}:{task_name}:{prompt}" if project_id else f"{task_name}:{prompt}"
         return hashlib.sha256(content.encode()).hexdigest()
 
     def _cache_get(self, key: str) -> str | None:

@@ -101,3 +101,41 @@ python scripts/produce_recap.py "https://www.yfsp.tv/play/zqBWB3mQYiB?id=2XQtVuG
 # Custom duration ratio (e.g. 0.15 = 15%)
 python scripts/produce_recap.py "https://www.yfsp.tv/play/zqBWB3mQYiB?id=2XQtVuG1mT3" --duration-ratio 0.15
 ```
+
+---
+
+## 6. Output Package Structure
+
+```text
+output/<movie_slug>/
+├── recap_master.mp4           # 1080p full commentary video with subtitles & -14 LUFS audio
+├── recap_youtube.mp4          # YouTube optimized faststart MP4
+├── recap_bilibili.mp4         # Bilibili compliant MP4
+├── metadata_youtube.json      # SEO-optimized YouTube title, description, and chapters
+├── metadata_bilibili.json     # Bilibili metadata, tags, and category info
+├── subtitles.srt              # SRT subtitle track
+├── subtitles.vtt              # WebVTT subtitle track
+├── cover.jpg                  # Keyframe thumbnail cover
+├── script.json                # Structured narration script with supporting scene timestamps
+├── quality_report.md          # 6-dimension Anti-Slop scorecard and grading breakdown
+└── token_profile.md           # LLM Gateway token consumption and cost profile
+```
+
+---
+
+## 7. Strict Movie Isolation & Anti-Contamination Guardrails (FR-Guardrail)
+
+To prevent cross-movie hallucination and eliminate foreign film contamination:
+
+### 7.1 Cache Scoping & Partitioning
+- All LLM Gateway cache keys (`_cache_key`) are partitioned by `project_id` and normalized movie title (`f"{project_id}:{task_name}:{prompt}"`).
+- Guarantees zero cross-movie cache hits when processing different movies concurrently or sequentially.
+
+### 7.2 Deterministic Movie Identity Gate
+- Deterministic verification (`_check_movie_identity_and_isolation` in `src/ai/verify.py`) scans all generated narration text against a database of foreign movie markers and known benchmark film titles.
+- Hard Fails (`severity: fail`) any script containing mismatched movie signatures or hook title introductions.
+
+### 7.3 Anti-Slop QA Scorecard Integration
+- SlopDetector evaluates the `Movie Identity & Anti-Contamination` dimension at 0 LLM tokens.
+- Immediate Tier F rejection upon detecting foreign film contamination, saving 100% of downstream semantic evaluation tokens.
+

@@ -52,6 +52,7 @@ def verify_script(
     # Phase 1: Deterministic checks
     logger.info("Running deterministic verification checks...")
     findings.extend(_check_schema(script))
+    findings.extend(_check_movie_identity_and_isolation(script, story))
     findings.extend(_check_narration_cleanliness(script))
     findings.extend(_check_length(script, config))
     findings.extend(_check_evidence(script, scene_index))
@@ -148,6 +149,98 @@ def _check_schema(script: dict[str, Any]) -> list[dict[str, Any]]:
                 "severity": "warning",
                 "message": f"Segment {seg.get('segment_id', i)} has low confidence: {seg.get('confidence')}",
             })
+
+    return findings
+
+
+# Known cross-movie contamination signatures for benchmark movies
+KNOWN_MOVIE_SIGNATURES: dict[str, list[str]] = {
+    "钢铁之泪": ["钢铁之泪", "Tears of Steel", "西莉亚", "Celia", "Thom", "阿姆斯特丹", "末日机甲", "记忆提取"],
+    "泰坦尼克号": ["泰坦尼克号", "Titanic", "杰克", "露丝", "海洋之心", "冰山碰撞"],
+    "肖申克的救赎": ["肖申克的救赎", "Shawshank", "安迪", "瑞德", "鲨堡监狱"],
+    "盗梦空间": ["盗梦空间", "Inception", "柯布", "造梦师", "图腾旋转"],
+    "星际穿越": ["星际穿越", "Interstellar", "库珀", "墨菲", "黑洞卡冈图雅", "五维空间"],
+    "流浪地球": ["流浪地球", "Wandering Earth", "刘培强", "刘启", "行星发动机", "点燃木星"],
+    "诅咒": ["诅咒", "The Curse", "镇坪", "张三"],
+}
+
+
+def is_same_movie(target_title: str, movie_name: str, signatures: list[str]) -> bool:
+    """Check if target_title refers to the same film as movie_name or any of its signatures."""
+    norm_target = re.sub(r'[\s_\-“”"《》\']', '', target_title).lower()
+    norm_movie = re.sub(r'[\s_\-“”"《》\']', '', movie_name).lower()
+    if not norm_target:
+        return False
+    if norm_movie in norm_target or norm_target in norm_movie:
+        return True
+    for sig in signatures:
+        norm_sig = re.sub(r'[\s_\-“”"《》\']', '', sig).lower()
+        if norm_sig and (norm_sig in norm_target or norm_target in norm_sig):
+            return True
+    return False
+
+
+def _check_movie_identity_and_isolation(
+    script: dict[str, Any], story: dict[str, Any]
+) -> list[dict[str, Any]]:
+    """
+    Deterministic verification that guarantees recap does NOT mix movies or hallucinate
+    foreign film titles, characters, or benchmark artifacts.
+    """
+    findings = []
+    segments = script.get("segments", [])
+    if not segments:
+        return findings
+
+    # Determine expected target movie title
+    raw_title = (
+        story.get("movie_title")
+        or story.get("title")
+        or script.get("title")
+        or script.get("movie_title")
+        or ""
+    )
+    target_title = re.sub(r'["“《”》\s]', '', raw_title)
+
+    full_text = " ".join(seg.get("text", "") for seg in segments)
+
+    # 1. Foreign movie signature cross-contamination check
+    contamination_detected = False
+    if target_title:
+        for movie_name, signatures in KNOWN_MOVIE_SIGNATURES.items():
+            if not is_same_movie(target_title, movie_name, signatures):
+                matched_sigs = [sig for sig in signatures if sig in full_text]
+                if matched_sigs:
+                    contamination_detected = True
+                    findings.append({
+                        "check": "movie_identity_isolation",
+                        "severity": "fail",
+                        "message": (
+                            f"Cross-movie contamination detected: Found foreign movie '{movie_name}' "
+                            f"signatures {matched_sigs} in recap for movie '{target_title}'"
+                        ),
+                    })
+
+    # 2. Hook / Introduction title consistency check
+    if segments and target_title:
+        first_text = segments[0].get("text", "")
+        hook_titles = re.findall(r'《([^》]+)》', first_text)
+        for ht in hook_titles:
+            clean_ht = re.sub(r'[\s]', '', ht)
+            if clean_ht and (clean_ht not in target_title and target_title not in clean_ht):
+                contamination_detected = True
+                findings.append({
+                    "check": "movie_identity_title_mismatch",
+                    "severity": "fail",
+                    "message": f"Hook introduces mismatched movie title 《{ht}》, expected 《{target_title}》",
+                })
+
+    if not contamination_detected:
+        findings.append({
+            "check": "movie_identity_isolation",
+            "severity": "pass",
+            "message": f"Movie identity verified: 0 cross-movie contamination detected for '{target_title or 'target movie'}'",
+        })
 
     return findings
 

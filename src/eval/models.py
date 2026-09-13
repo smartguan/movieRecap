@@ -46,6 +46,8 @@ class AudioVideoCouplingMetrics(BaseModel):
 
 class DeterministicMetrics(BaseModel):
     cleanliness_score: float = Field(100.0, ge=0.0, le=100.0)
+    movie_identity_pass: bool = True
+    contaminated_entities: list[str] = Field(default_factory=list)
     lexical_diversity_ttr: float = 0.0
     distinct_2_grams: float = 0.0
     distinct_3_grams: float = 0.0

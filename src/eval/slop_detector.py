@@ -174,7 +174,7 @@ class SlopDetector:
             total_eval_tokens=total_tokens,
             total_eval_cost_usd=round(total_cost, 6),
             deterministic_savings_description=(
-                f"5 deterministic evaluators (Cleanliness, Diversity, Evidence, AV Coupling, Pacing) executed at 0 tokens ($0.00)"
+                f"6 deterministic evaluators (Movie Identity, Cleanliness, Diversity, Evidence, AV Coupling, Pacing) executed at 0 tokens ($0.00)"
             ),
             timestamp=datetime.datetime.now(datetime.timezone.utc).isoformat(),
         )
