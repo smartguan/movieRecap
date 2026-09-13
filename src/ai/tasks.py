@@ -186,6 +186,20 @@ TASK_DESCRIPTION_GENERATION = SemanticTask(
 )
 
 
+TASK_ANTI_SLOP_EVALUATION = SemanticTask(
+    name="anti_slop_evaluation",
+    description="Evaluate commentary depth, originality, authentic voice, and anti-AI-slop rubric",
+    reason_not_deterministic=(
+        "Evaluating commentary depth, narrative voice authenticity, insightfulness, "
+        "and detecting subtle AI slop formulas requires advanced semantic judgment"
+    ),
+    model_tier="strong",
+    max_input_tokens=8000,
+    max_output_tokens=3000,
+    max_cost_usd=0.20,
+    cacheable=False,
+)
+
 # All registered tasks
 ALL_TASKS = [
     TASK_SCENE_DESCRIPTION,
@@ -197,6 +211,7 @@ ALL_TASKS = [
     TASK_CONCLUSION_GENERATION,
     TASK_FACTUAL_VERIFICATION,
     TASK_QUALITY_EVALUATION,
+    TASK_ANTI_SLOP_EVALUATION,
     TASK_TITLE_GENERATION,
     TASK_DESCRIPTION_GENERATION,
 ]

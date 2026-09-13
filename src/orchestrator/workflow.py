@@ -574,6 +574,33 @@ class WorkflowRunner:
         except Exception as e:
             logger.warning("Failed to generate token cost profile in QA stage: %s", e)
 
+        # 3. Automatically run Anti-AI-Slop Quality Evaluation
+        try:
+            from src.eval.slop_detector import SlopDetector
+            detector = SlopDetector(self.config)
+            eval_report = detector.evaluate_project(project_dir)
+            
+            # Save JSON report
+            eval_json_file = project_dir / "recap_quality_report.json"
+            eval_json_file.write_text(
+                json.dumps(eval_report.model_dump(), indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            # Save Markdown report
+            eval_md_file = project_dir / "recap_quality_report.md"
+            eval_md_file.write_text(
+                detector.format_markdown_report(eval_report),
+                encoding="utf-8",
+            )
+            logger.info(
+                "Anti-Slop QA complete: Grade %s (Score: %.1f/100, Passed: %s)",
+                eval_report.grade.value,
+                eval_report.total_score,
+                eval_report.passed,
+            )
+        except Exception as e:
+            logger.warning("Failed to run Anti-Slop QA evaluation: %s", e)
+
         return project
 
     def _stage_upload(self, project: dict[str, Any]) -> dict[str, Any]:
