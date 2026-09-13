@@ -1,6 +1,7 @@
 """
 Scene data models.
 """
+from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
@@ -34,4 +35,4 @@ class SceneIndex(BaseModel):
     """An index of all scenes in a project."""
     project_id: str
     scenes: List[Scene]
-    created_at: datetime
+    created_at: datetime = Field(default_factory=datetime.utcnow)

@@ -5,6 +5,7 @@ This module defines the state machine for project processing.
 All state transitions are deterministic and validated.
 """
 
+from __future__ import annotations
 from enum import Enum
 
 

@@ -5,6 +5,7 @@ Handles creation, state transitions, persistence, and loading of projects.
 All operations are deterministic — no LLM calls.
 """
 
+from __future__ import annotations
 import json
 import uuid
 from datetime import datetime, timezone

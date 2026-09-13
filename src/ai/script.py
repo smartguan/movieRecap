@@ -14,6 +14,7 @@ Target: ~6,000-8,000 Chinese characters for 20-30 minutes at ~250 chars/min.
 Each segment references supporting source scenes for evidence grounding.
 """
 
+from __future__ import annotations
 import json
 import logging
 from typing import Any

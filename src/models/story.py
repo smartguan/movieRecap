@@ -1,6 +1,7 @@
 """
 Story understanding data models.
 """
+from __future__ import annotations
 from datetime import datetime
 from typing import List, Optional, Tuple
 
@@ -42,4 +43,4 @@ class StoryUnderstanding(BaseModel):
     events: List[StoryEvent] = Field(default_factory=list)
     locations: List[str] = Field(default_factory=list)
     ambiguities: List[str] = Field(default_factory=list)
-    created_at: datetime
+    created_at: datetime = Field(default_factory=datetime.utcnow)

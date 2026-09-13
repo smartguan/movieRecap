@@ -11,6 +11,7 @@ Each task declares:
 This module also provides a convenience function to register all standard tasks.
 """
 
+from __future__ import annotations
 from src.ai.gateway import LLMGateway, SemanticTask
 
 

@@ -12,6 +12,7 @@ Design principles:
 - State is persisted after every transition.
 """
 
+from __future__ import annotations
 import logging
 from pathlib import Path
 from typing import Any
@@ -188,14 +189,6 @@ class WorkflowRunner:
         handler = stage_handlers.get(current_state)
         if handler is None:
             raise ValueError(f"No handler for state: {current_state.value}")
-
-        # Transition to the processing state
-        if current_state == ProjectState.RECEIVED:
-            project = self.project_manager.transition(
-                project,
-                ProjectState.INGESTING,
-                details="Starting ingestion",
-            )
 
         # Execute the stage handler
         project = handler(project)

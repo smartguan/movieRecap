@@ -1,4 +1,5 @@
 """Source ingestion modules."""
+from __future__ import annotations
 import hashlib
 import json
 import shutil
@@ -6,8 +7,8 @@ import uuid
 from pathlib import Path
 from typing import Tuple, List, Optional
 
-from models.project import Project, MediaInfo
-from media.probe import extract_media_info
+from src.models.project import Project, MediaInfo
+from src.media.probe import extract_media_info
 
 def compute_file_hash(path: Path, algorithm: str = 'sha256') -> str:
     """Compute hash of a file in chunks."""

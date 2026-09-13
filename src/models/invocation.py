@@ -1,6 +1,7 @@
 """
 LLM invocation tracking data models.
 """
+from __future__ import annotations
 from datetime import datetime
 from typing import List, Optional
 
@@ -23,7 +24,7 @@ class ModelInvocation(BaseModel):
     confidence: Optional[float] = None
     result_hash: str
     evidence_references: List[str] = Field(default_factory=list)
-    timestamp: datetime
+    timestamp: datetime = Field(default_factory=datetime.utcnow)
 
 
 class InvocationLedger(BaseModel):

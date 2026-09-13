@@ -11,6 +11,7 @@ Only relevant summaries and evidence spans are sent to the LLM — never the
 full transcript or all frames.
 """
 
+from __future__ import annotations
 import json
 import logging
 from typing import Any

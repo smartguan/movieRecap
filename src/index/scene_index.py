@@ -6,6 +6,7 @@ LLM-generated descriptions may be added later but the index itself
 is purely deterministic.
 """
 
+from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from pathlib import Path

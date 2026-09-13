@@ -1,6 +1,7 @@
 """
 Project data models.
 """
+from __future__ import annotations
 from enum import Enum
 from datetime import datetime
 from pathlib import Path
@@ -51,8 +52,8 @@ class Project(BaseModel):
     target_language: str = 'zh-CN'
     state: ProjectState = ProjectState.RECEIVED
     target_duration_range: Tuple[int, int] = (20, 30)
-    created_at: datetime
-    updated_at: datetime
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
     metadata: dict = Field(default_factory=dict)
     error_info: Optional[str] = None
     cost_usd: float = 0.0

@@ -13,6 +13,7 @@ The writer model MUST NOT self-approve its output — this is an independent
 evaluation pass.
 """
 
+from __future__ import annotations
 import json
 import logging
 import re

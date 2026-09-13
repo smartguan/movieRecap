@@ -1,6 +1,7 @@
 """
 Script generation data models.
 """
+from __future__ import annotations
 from datetime import datetime
 from typing import List
 
@@ -29,7 +30,7 @@ class Script(BaseModel):
     project_id: str
     segments: List[ScriptSegment] = Field(default_factory=list)
     target_speaking_rate: float = 250.0  # characters per minute for Mandarin
-    created_at: datetime
+    created_at: datetime = Field(default_factory=datetime.utcnow)
     version: int = 1
 
     @computed_field

@@ -14,6 +14,7 @@ It enforces:
 No module may call an LLM provider directly. This is the ONLY path to model inference.
 """
 
+from __future__ import annotations
 import hashlib
 import json
 import logging

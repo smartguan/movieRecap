@@ -1,3 +1,4 @@
+from __future__ import annotations
 def seconds_to_srt_time(seconds: float) -> str:
     """Convert seconds to HH:MM:SS,mmm"""
     hours = int(seconds // 3600)

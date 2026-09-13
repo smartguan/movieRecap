@@ -12,7 +12,10 @@ venv/
 .DS_Store
 Thumbs.db
 
-# IDE
+# Test & coverage
+.pytest_cache/
+.coverage
+htmlcov/
 .vscode/
 .idea/
 *.swp
