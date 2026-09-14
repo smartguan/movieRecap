@@ -54,10 +54,21 @@ class SlopDetector:
         scene_index_file = project_dir / "scene_index.json"
         scene_index = json.loads(scene_index_file.read_text(encoding="utf-8")) if scene_index_file.exists() else {}
 
+        # Fallback to stage 2 analyzed directory if evaluating a stage 3 directory
+        slug = project_dir.name
+        stage2_dir = Path("data/stages/2_analyzed") / slug
+        if not story and stage2_dir.exists() and (stage2_dir / "story_understanding.json").exists():
+            story = json.loads((stage2_dir / "story_understanding.json").read_text(encoding="utf-8"))
+        if not scene_index and stage2_dir.exists() and (stage2_dir / "scene_index.json").exists():
+            scene_index = json.loads((stage2_dir / "scene_index.json").read_text(encoding="utf-8"))
+
         edit_plan_file = project_dir / "edit_plan.json"
         edit_decisions = json.loads(edit_plan_file.read_text(encoding="utf-8")) if edit_plan_file.exists() else []
 
-        audio_duration = script.get("estimated_duration_minutes", 2.0) * 60.0
+        if not edit_decisions and (project_dir / "assets" / "edit_decisions.json").exists():
+            edit_decisions = json.loads((project_dir / "assets" / "edit_decisions.json").read_text(encoding="utf-8"))
+
+        audio_duration = sum(float(d.get("duration", 0.0)) for d in edit_decisions) if edit_decisions else (script.get("estimated_duration_minutes", 2.0) * 60.0)
 
         return self.evaluate_script(
             script=script,
