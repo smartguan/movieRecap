@@ -202,7 +202,7 @@ def run_stage_generate(
     voice_dir.mkdir(parents=True, exist_ok=True)
     voice_assets = generate_voice_assets(script_dict, voice_dir)
     (stage_work_dir / "voice_assets.json").write_text(
-        json.dumps([v.model_dump() for v in voice_assets], indent=2, ensure_ascii=False),
+        json.dumps([v.model_dump() if hasattr(v, "model_dump") else v for v in voice_assets], indent=2, ensure_ascii=False),
         encoding="utf-8",
     )
 
@@ -217,20 +217,21 @@ def run_stage_generate(
         clips_dir=clips_dir,
     )
     (stage_work_dir / "edit_plan.json").write_text(
-        json.dumps([d.model_dump() for d in edit_decisions], indent=2, ensure_ascii=False),
+        json.dumps([d.model_dump() if hasattr(d, "model_dump") else d for d in edit_decisions], indent=2, ensure_ascii=False),
         encoding="utf-8",
     )
 
     # 6. Render Final 1080p Video
     renders_dir = stage_work_dir / "renders"
     renders_dir.mkdir(parents=True, exist_ok=True)
-    render_result = render_recap_video(
+    recap_video_path = renders_dir / "recap_final.mp4"
+    render_recap_video(
         edit_decisions=edit_decisions,
-        voice_assets=voice_assets,
-        renders_dir=renders_dir,
-        target_resolution=(1920, 1080),
+        output_video_path=recap_video_path,
         burn_subtitles=True,
     )
+
+    total_audio_dur = sum(float(d.get("duration", 0.0)) for d in edit_decisions)
 
     # 7. Anti-Slop QA Scorecard Evaluation
     detector = SlopDetector(config=config)
@@ -238,24 +239,26 @@ def run_stage_generate(
         script=script_dict,
         story=story_dict,
         scene_index=scene_index_dict,
-        edit_decisions=[d.model_dump() for d in edit_decisions],
-        timeline_audio_duration=render_result.audio_duration_seconds,
+        edit_decisions=[d.model_dump() if hasattr(d, "model_dump") else d for d in edit_decisions],
+        timeline_audio_duration=total_audio_dur,
     )
 
     # 8. Export Multi-Platform Bundles
     assets_dir = stage_work_dir / "assets"
     assets_dir.mkdir(parents=True, exist_ok=True)
     (assets_dir / "edit_decisions.json").write_text(
-        json.dumps([d.model_dump() for d in edit_decisions], indent=2, ensure_ascii=False),
+        json.dumps([d.model_dump() if hasattr(d, "model_dump") else d for d in edit_decisions], indent=2, ensure_ascii=False),
         encoding="utf-8",
     )
 
     import os, shutil
-    if (stage2_dir / "keyframes").exists() and not (stage_work_dir / "keyframes").exists():
+    kf_stage2 = (stage2_dir / "keyframes").resolve()
+    kf_work = stage_work_dir / "keyframes"
+    if kf_stage2.exists() and not kf_work.exists() and not kf_work.is_symlink():
         try:
-            os.symlink(stage2_dir / "keyframes", stage_work_dir / "keyframes")
+            os.symlink(kf_stage2, kf_work)
         except Exception:
-            shutil.copytree(stage2_dir / "keyframes", stage_work_dir / "keyframes", dirs_exist_ok=True)
+            shutil.copytree(kf_stage2, kf_work, dirs_exist_ok=True)
 
     exporter = PlatformExporter(output_root=platform_base_dir)
     exported_dict = exporter.export_package(
@@ -269,7 +272,7 @@ def run_stage_generate(
         slug=slug,
         movie_title=movie_title,
         target_recap_minutes=target_recap_min,
-        rendered_video_path=render_result.recap_video_path,
+        rendered_video_path=recap_video_path,
         platform_output_dir=platform_pkg_dir,
         quality_grade=qa_report.grade.value,
         quality_score=qa_report.total_score,

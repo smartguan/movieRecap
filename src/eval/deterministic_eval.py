@@ -199,23 +199,39 @@ def evaluate_deterministic(
         findings=evidence_findings,
     )
 
-    # 4. Cross-Modal Audio-Visual Coupling (15% weight)
-    # Checks duration drift, shot duration distribution, and visual character matching
+    # 4. Cross-Modal Audio-Visual Coupling & Timeline Coverage (15% weight)
+    # Checks duration drift, shot duration distribution, timeline span, anti-looping, and visual character matching
     max_shot_duration = 0.0
     total_drift = 0.0
     matched_characters = 0
     total_character_checks = 0
+    duplicate_clip_loops = 0
+    timeline_coverage_ratio = 1.0
 
     known_characters = [c.get("name") for c in story.get("characters", []) if isinstance(c, dict) and c.get("name")] if story else []
 
     if edit_decisions:
-        for dec in edit_decisions:
+        for i, dec in enumerate(edit_decisions):
             dur = dec.get("duration", 0.0)
             max_shot_duration = max(max_shot_duration, dur)
             # Drift between video clip and audio track
             v_dur = dec.get("source_end", 0.0) - dec.get("source_start", 0.0)
             if v_dur > 0 and dur > 0:
                 total_drift += abs(v_dur - dur)
+
+            # Check consecutive duplicate/looping clip starts
+            if i > 0:
+                prev_st = edit_decisions[i - 1].get("source_start", 0.0)
+                curr_st = dec.get("source_start", 0.0)
+                if abs(curr_st - prev_st) < 5.0:
+                    duplicate_clip_loops += 1
+
+        if len(edit_decisions) >= 3:
+            min_src = min(d.get("source_start", 0.0) for d in edit_decisions)
+            max_src = max(d.get("source_end", 0.0) for d in edit_decisions)
+            tot_src_dur = scene_index.get("duration_seconds", 300.0) if scene_index else 300.0
+            if tot_src_dur > 0:
+                timeline_coverage_ratio = min(1.0, (max_src - min_src) / tot_src_dur)
 
     for seg in segments:
         text = seg.get("text", "")
@@ -246,6 +262,12 @@ def evaluate_deterministic(
         coupling_score -= (0.8 - char_alignment_ratio) * 25.0
     if not dynamic_pacing_pass:
         coupling_score -= 15.0
+    if duplicate_clip_loops > 0:
+        coupling_score -= min(40.0, duplicate_clip_loops * 15.0)
+        hard_failures.append(f"Visual repetition defect: {duplicate_clip_loops} consecutive looping/duplicate source clip transitions detected")
+    if timeline_coverage_ratio < 0.35 and (scene_index.get("duration_seconds", 0) if scene_index else 0) > 180.0:
+        coupling_score -= (0.35 - timeline_coverage_ratio) * 40.0
+
     coupling_score = max(0.0, round(coupling_score, 1))
 
     coupling_findings = []
@@ -253,6 +275,10 @@ def evaluate_deterministic(
         coupling_findings.append(f"Audio-video duration drift: {total_drift:.2f}s")
     if not dynamic_pacing_pass:
         coupling_findings.append(f"Shot duration exceeds dynamic threshold: {max_shot_duration:.1f}s > 35s")
+    if duplicate_clip_loops > 0:
+        coupling_findings.append(f"Detected {duplicate_clip_loops} duplicate/looping clip transitions")
+    if timeline_coverage_ratio < 0.40 and (scene_index.get("duration_seconds", 0) if scene_index else 0) > 180.0:
+        coupling_findings.append(f"Low timeline coverage: spans {timeline_coverage_ratio * 100:.1f}% of movie runtime")
 
     av_coupling_metrics = AudioVideoCouplingMetrics(
         av_duration_drift_seconds=round(total_drift, 3),
@@ -260,14 +286,14 @@ def evaluate_deterministic(
         max_shot_duration_seconds=round(max_shot_duration, 2),
         dynamic_pacing_pass=dynamic_pacing_pass,
         coupling_score=coupling_score,
-        details=f"Drift={total_drift:.2f}s, Character Visual Grounding={char_alignment_ratio * 100:.1f}%, Max Shot={max_shot_duration:.1f}s",
+        details=f"Drift={total_drift:.2f}s, Character Visual Grounding={char_alignment_ratio * 100:.1f}%, Timeline Coverage={timeline_coverage_ratio * 100:.1f}%, Loops={duplicate_clip_loops}",
     )
 
     av_coupling_dim = DimensionScore(
         name="Cross-Modal Audio-Visual Coupling",
         score=coupling_score,
         weight=0.15,
-        passed=coupling_score >= 75.0,
+        passed=coupling_score >= 70.0 and duplicate_clip_loops == 0,
         details=av_coupling_metrics.details,
         findings=coupling_findings,
     )

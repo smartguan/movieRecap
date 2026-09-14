@@ -370,6 +370,33 @@ Respond in JSON:
             "segment_type": "plot_and_commentary",
         }]
 
+    # Deterministic scene evidence alignment:
+    # Ensure every body segment has valid supporting scenes within this group's timeframe
+    event_ts_list = [e.get("timestamp_seconds", 0.0) for e in events if "timestamp_seconds" in e]
+    total_dur = scene_index.get("duration_seconds", 600.0)
+    grp_start = (group_idx / max(1, total_groups)) * total_dur
+    grp_end = ((group_idx + 1) / max(1, total_groups)) * total_dur
+
+    for idx, seg in enumerate(results):
+        supporting = seg.get("supporting_scenes", [])
+        valid = False
+        if supporting and isinstance(supporting, list) and isinstance(supporting[0], dict):
+            s_st = supporting[0].get("start_seconds", 0.0)
+            s_et = supporting[0].get("end_seconds", 0.0)
+            if s_et > s_st:
+                valid = True
+
+        if not valid:
+            if idx < len(event_ts_list):
+                ref_st = event_ts_list[idx]
+            else:
+                dt = (grp_end - grp_start) / max(1, len(results))
+                ref_st = grp_start + idx * dt
+            seg["supporting_scenes"] = [{
+                "start_seconds": round(ref_st, 1),
+                "end_seconds": round(ref_st + 20.0, 1),
+            }]
+
     return results
 
 

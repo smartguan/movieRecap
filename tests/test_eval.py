@@ -164,3 +164,67 @@ def test_slop_detector_evaluation():
     assert "# 🎬 Movie Recap Quality & Anti-Slop Scorecard" in md
     assert "Cross-Modal Audio-Visual Coupling Telemetry" in md
     assert "Evaluator LLM Token & Cost Telemetry" in md
+
+
+def test_deterministic_eval_catches_looping_clips():
+    script = {
+        "title": "诅咒",
+        "segments": [
+            {"segment_id": "narration-000", "text": "故事开端，神秘诅咒正在蔓延。", "supporting_scenes": [{"start_seconds": 35.0, "end_seconds": 55.0}]},
+            {"segment_id": "narration-001", "text": "真相逐渐浮现，主角深入调查。", "supporting_scenes": [{"start_seconds": 35.0, "end_seconds": 55.0}]},
+            {"segment_id": "narration-002", "text": "高潮对决时刻，怨灵彻底爆发。", "supporting_scenes": [{"start_seconds": 35.0, "end_seconds": 55.0}]},
+        ]
+    }
+    scene_index = {"duration_seconds": 5000.0, "scenes": [{"start_seconds": float(i * 10), "end_seconds": float(i * 10 + 10)} for i in range(500)]}
+    edit_decisions = [
+        {"segment_id": "narration-000", "duration": 10.0, "source_start": 35.0, "source_end": 45.0},
+        {"segment_id": "narration-001", "duration": 10.0, "source_start": 35.0, "source_end": 45.0},
+        {"segment_id": "narration-002", "duration": 10.0, "source_start": 35.0, "source_end": 45.0},
+    ]
+
+    metrics, dims, telemetry = evaluate_deterministic(
+        script=script,
+        scene_index=scene_index,
+        edit_decisions=edit_decisions,
+    )
+
+    assert any("looping/duplicate" in fail for fail in metrics.hard_failures)
+    av_dim = next(d for d in dims if d.name == "Cross-Modal Audio-Visual Coupling")
+    assert av_dim.passed is False
+
+
+@patch("subprocess.run")
+def test_clip_planner_timeline_progression_and_anti_looping(mock_run, tmp_path):
+    from src.media.clip_planner import plan_and_extract_clips
+    
+    mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+
+    voice_assets = [
+        {"segment_id": f"narration-{i:03d}", "duration": 10.0, "start_time": float(i * 10), "end_time": float(i * 10 + 10), "text": f"段落{i}", "supporting_scenes": [{"start_seconds": 35.0, "end_seconds": 55.0}]}
+        for i in range(10)
+    ]
+    scene_index = {
+        "duration_seconds": 5000.0,
+        "scenes": [
+            {"scene_id": f"s-{i}", "start_seconds": float(i * 50), "end_seconds": float(i * 50 + 40)}
+            for i in range(100)
+        ]
+    }
+
+    decisions = plan_and_extract_clips(
+        source_video=tmp_path / "source.mp4",
+        voice_assets=voice_assets,
+        scene_index=scene_index,
+        output_clips_dir=tmp_path / "clips",
+    )
+
+    assert len(decisions) == 10
+    start_times = [d["source_start"] for d in decisions]
+    # Check that timestamps advance and do not loop or repeat the same 35s
+    for i in range(1, len(start_times)):
+        assert start_times[i] != start_times[i - 1]
+        assert abs(start_times[i] - start_times[i - 1]) >= 8.0
+    
+    # Check that decisions span a significant portion of the movie timeline
+    assert max(start_times) > 3500.0
+
