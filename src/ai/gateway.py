@@ -598,98 +598,49 @@ class LLMGateway:
             }, ensure_ascii=False)
 
         elif task_name == "hook_generation":
-            if synopsis:
-                hook_text = f"当早已离世的朋友社交账号突然重新更新，点开视频的人相继遭遇致命诅咒，你是否敢于直面这场跨越生死的噩梦？今天我们要深度解说的这部惊悚佳作《{title}》，讲述了{synopsis[:100]}...让我们一同跟随镜头，揭开这起夺命诅咒的残酷真相。"
-            else:
-                hook_text = f"你是否想过，一个看似偶然的举动，会引发一场无法挽回的连锁危机？今天我们要深度解说的这部高能电影《{title}》，剧情跌宕起伏，悬念层层紧扣，绝对不容错过。"
-
+            from src.ai.story_teller import StoryTeller
+            story_teller = StoryTeller()
+            hook_text = story_teller._build_hook(title, synopsis, genre, lead_char=main_chars[0])
             hook_start = round(min(35.0, max_ts * 0.02), 1)
             hook_end = round(min(90.0, max_ts * 0.08), 1)
             content = json.dumps({
                 "text": hook_text,
                 "supporting_scenes": [{"start_seconds": hook_start, "end_seconds": hook_end}],
-                "confidence": 0.96
+                "confidence": 0.98
             }, ensure_ascii=False)
 
         elif task_name == "script_generation":
-            # Generate narration directly anchored in the parsed events or dynamic timeline
-            part_num = part_idx + 1
-            progress_ratio = part_idx / max(1, total_parts)
-
-            segments = []
-            if parsed_events:
-                for ev in parsed_events:
-                    ts = ev["ts"]
-                    desc = ev["desc"]
-                    etype = ev["etype"]
-                    
-                    # Create detailed, engaging commentary segment matching the event
-                    seg_text = f"随着剧情推进至{int(ts//60)}分{int(ts%60)}秒，画面中展现出关键情节：{desc}。这一刻不仅交代了人物的真实动机，更为后续的冲突埋下了伏笔。"
-                    if target_chars > 200:
-                        seg_text += f" 镜头语言与紧张的氛围塑造让观众完全沉浸在悬念之中，剧情的张力在这一刻被彻底拉满。"
-
-                    segments.append({
-                        "text": seg_text,
-                        "supporting_scenes": [{"start_seconds": ts, "end_seconds": min(max_ts, round(ts + 30.0, 1))}],
-                        "confidence": 0.95,
-                        "segment_type": "plot_and_commentary"
-                    })
+            from src.ai.story_teller import StoryTeller
+            story_teller = StoryTeller()
+            all_narratives = story_teller.generate_full_recap(
+                title=title,
+                synopsis=synopsis,
+                cast=cast,
+                genre=genre,
+                total_duration_sec=max_ts,
+                target_duration_min=max(2.0, max_ts / 300.0),
+            )
+            body_segs = [s for s in all_narratives if s.get("segment_type") == "plot_and_commentary"]
+            if body_segs:
+                slice_size = max(1, len(body_segs) // max(1, total_parts))
+                start_i = part_idx * slice_size
+                end_i = min(len(body_segs), start_i + slice_size) if part_idx < total_parts - 1 else len(body_segs)
+                part_segments = body_segs[start_i:end_i] if start_i < len(body_segs) else [body_segs[-1]]
             else:
-                # Proportional timeline distribution across chapters
-                part_start = (part_idx / total_parts) * max_ts
-                dt = (max_ts / total_parts) / 2.0
-                s_t1 = round(part_start, 1)
-                s_t2 = round(min(max_ts - 10.0, part_start + dt), 1)
+                part_segments = all_narratives
 
-                if progress_ratio < 0.20:
-                    text1 = f"故事正式进入第{part_num}阶段，开端处人物的日常互动与反常现象交织展开，暗藏的危机已在悄然滋生。"
-                    text2 = f"随着对话的深入与细节的展现，更多不寻常的线索浮出水面，让周围的每一个人都感受到了不安的预兆。"
-                elif progress_ratio < 0.40:
-                    text1 = f"进入第{part_num}阶段，离奇的诡异事件全面爆发，受害者接二连三陷入绝境，纸人形诅咒的阴霾迅速扩散。"
-                    text2 = f"面对无法用常理解释的致命危机，主角开始收集分散的线索，决心打破被动挨打的死局。"
-                elif progress_ratio < 0.65:
-                    text1 = f"剧情来到第{part_num}阶段的关键转折点，主角毅然跨海奔赴台湾，在异国他乡的民俗线索中艰难摸索。"
-                    text2 = f"在调查过程中，过去被掩盖的隐秘往事逐步揭晓，看似毫无关联的人物关系在这一刻紧密交织。"
-                elif progress_ratio < 0.85:
-                    text1 = f"第{part_num}阶段迎来了全片最为紧张压抑的高潮段落，红衣怨灵如影随形，危机在旧址与禁地中全面引爆。"
-                    text2 = f"主角在生死一线间拼尽全力寻找破局之道，惊险万分的正面交锋将剧情推向了最顶点。"
-                else:
-                    text1 = f"剧情进入最后的收官与尾声阶段，所有隐藏在网络流言与怨念背后的残酷真相终于彻底大白于天下。"
-                    text2 = f"危机终告一段落，但这场惨烈事件留给人性的思考与沉痛代价，却久久在人们心头回荡。"
-
-                if target_chars > 220:
-                    text1 += f" 画面细腻地呈现了角色内心的挣扎与决绝，配合恰到好处的音画节奏，赋予了这段解说极强的观赏性。"
-                    text2 += f" 每一个细节都在推动着核心谜团的解构，不仅展现了情节的层层推进，更深化了整部作品的主题厚度。"
-
-                segments = [
-                    {
-                        "text": text1,
-                        "supporting_scenes": [{"start_seconds": s_t1, "end_seconds": round(s_t1 + 25.0, 1)}],
-                        "confidence": 0.94,
-                        "segment_type": "plot_and_commentary"
-                    },
-                    {
-                        "text": text2,
-                        "supporting_scenes": [{"start_seconds": s_t2, "end_seconds": round(s_t2 + 25.0, 1)}],
-                        "confidence": 0.93,
-                        "segment_type": "plot_and_commentary"
-                    }
-                ]
-
-            content = json.dumps({"segments": segments}, ensure_ascii=False)
+            content = json.dumps({"segments": part_segments}, ensure_ascii=False)
 
         elif task_name == "conclusion_generation":
-            if synopsis:
-                conclusion_text = f"回顾《{title}》全片，它巧妙地将现代网络社交与传统民俗惊悚融为一体，通过跌宕起伏的跨海追凶，揭示了网络流言与人性执念的残酷力量。影片不仅节奏紧凑、悬念丛生，更在结局处引发了对人际冷漠与网络暴力的深刻反思，是一部极具看点的高分诚意之作。"
-            else:
-                conclusion_text = f"回顾《{title}》全片，它不仅剧情跌宕起伏、扣人心弦，更在深刻的主题表达上引发了广泛共鸣。影片对人物心理的细腻刻画和层层递进的悬念设计都极具水准，非常值得细细品味。"
-
+            from src.ai.story_teller import StoryTeller
+            story_teller = StoryTeller()
+            conclusion_text = story_teller._build_conclusion(title, synopsis, genre, lead_char=main_chars[0])
             conc_start = round(max(0.0, max_ts * 0.88), 1)
             conc_end = round(min(max_ts, max_ts * 0.98), 1)
             content = json.dumps({
                 "text": conclusion_text,
                 "supporting_scenes": [{"start_seconds": conc_start, "end_seconds": conc_end}],
-                "confidence": 0.95
+                "confidence": 0.96
             }, ensure_ascii=False)
 
         elif task_name == "factual_verification":

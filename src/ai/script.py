@@ -15,6 +15,7 @@ import re
 from typing import Any, Dict, List, Optional
 
 from src.ai.gateway import LLMGateway
+from src.ai.story_teller import StoryTeller
 from src.ai.tasks import register_all_tasks
 
 logger = logging.getLogger(__name__)
@@ -29,12 +30,7 @@ def generate_script(
     """
     Generate the full narration script scaled dynamically to project target duration.
 
-    Process:
-    1. Calculate target character count from target_duration_range (250 chars/min)
-    2. Generate opening hook (SEMANTIC)
-    3. Generate body segments following the event timeline (SEMANTIC with compact token format)
-    4. Generate conclusion (SEMANTIC)
-    5. Assemble into complete script (DETERMINISTIC)
+    Uses StoryTeller to construct a multi-act, zero-repetition, cinematic narration arc.
 
     Args:
         project: Project data dict.
@@ -50,119 +46,26 @@ def generate_script(
 
     title = project.get("title", "Unknown Movie")
     metadata = project.get("metadata", {})
+    synopsis = metadata.get("synopsis", "") or story.get("one_sentence_summary", "")
+    genre = metadata.get("genre", "") or (story.get("themes", ["剧情"])[0] if story.get("themes") else "剧情")
+    cast = [c.get("name") for c in story.get("characters", []) if c.get("name")] or metadata.get("stars", [])
     target_min, target_max = project.get("target_duration_range", [2.0, 4.0])
     target_duration_min = (target_min + target_max) / 2.0
-    speaking_rate = 250.0  # chars per minute for Mandarin
-    total_target_chars = int(target_duration_min * speaking_rate)
+    speaking_rate = 240.0
+    total_dur_sec = float(scene_index.get("duration_seconds", 600.0))
 
-    # Dynamic character allocation
-    hook_chars = min(200, max(80, int(total_target_chars * 0.20)))
-    conclusion_chars = min(250, max(80, int(total_target_chars * 0.20)))
-    body_chars_total = max(100, total_target_chars - hook_chars - conclusion_chars)
+    story_teller = StoryTeller(config)
+    segments = story_teller.generate_full_recap(
+        title=title,
+        synopsis=synopsis,
+        cast=cast,
+        genre=genre,
+        total_duration_sec=total_dur_sec,
+        target_duration_min=target_duration_min,
+        scene_index=scene_index,
+        story_understanding=story,
+    )
 
-    segments: list[dict[str, Any]] = []
-    segment_counter = 0
-
-    # 1. Generate opening hook (SEMANTIC)
-    hook = _generate_hook(gateway, story, title, metadata, target_chars=hook_chars)
-    hook["segment_id"] = f"narration-{segment_counter:03d}"
-    hook["segment_type"] = "hook"
-    segments.append(hook)
-    segment_counter += 1
-
-    # 2. Generate body segments (SEMANTIC with token-optimized context)
-    events = story.get("events", [])
-    characters = story.get("characters", [])
-    local_summaries = story.get("local_summaries", [])
-    
-    # If events list is sparse, supplement with local summary events to ensure timeline granularity
-    if len(events) < len(local_summaries) and local_summaries:
-        summary_events = []
-        for ls in local_summaries:
-            for e in ls.get("events", []):
-                if e.get("description"):
-                    summary_events.append(e)
-        if len(summary_events) > len(events):
-            events = summary_events
-
-    # Group events dynamically based on target duration (approx 1-1.5 minutes per group call)
-    desired_body_groups = max(1, int(target_duration_min / 1.2))
-    if len(events) < desired_body_groups:
-        total_dur = scene_index.get("duration_seconds", 600.0)
-        scenes_list = scene_index.get("scenes", [])
-        synopsis = metadata.get("synopsis", "") if metadata else ""
-
-        interpolated_events = []
-        for i in range(desired_body_groups):
-            anchor_ts = (i / max(1, desired_body_groups)) * total_dur
-            window_len = total_dur / max(1, desired_body_groups)
-
-            # Find nearest scene with dialogue transcript in this window
-            matched_scene = None
-            for sc in scenes_list:
-                sc_st = sc.get("start_seconds", 0.0)
-                if abs(sc_st - anchor_ts) <= window_len and sc.get("transcript_text"):
-                    matched_scene = sc
-                    break
-
-            if matched_scene:
-                ts = matched_scene.get("start_seconds", anchor_ts)
-                t_text = matched_scene.get("transcript_text", "")
-                desc = f"主线关键情节与人物对话（现场对白: {t_text[:40]}...）"
-            else:
-                ts = anchor_ts
-                progress = i / max(1, desired_body_groups)
-                if progress < 0.20:
-                    desc = f"开篇人物登场与反常事件初现（时间点 {int(ts//60)}分{int(ts%60)}秒）"
-                elif progress < 0.40:
-                    desc = f"诡异诅咒全面扩散与同伴遇险（时间点 {int(ts//60)}分{int(ts%60)}秒）"
-                elif progress < 0.65:
-                    desc = f"跨海奔赴异地展开实地深入调查（时间点 {int(ts//60)}分{int(ts%60)}秒）"
-                elif progress < 0.85:
-                    desc = f"民俗旧址惊险对峙与怨灵步步紧逼（时间点 {int(ts//60)}分{int(ts%60)}秒）"
-                else:
-                    desc = f"终局决战与诅咒真相彻底揭晓（时间点 {int(ts//60)}分{int(ts%60)}秒）"
-
-            interpolated_events.append({
-                "event_id": f"evt-{i:03d}",
-                "description": desc,
-                "timestamp_seconds": round(ts, 1),
-                "event_type": "plot",
-                "characters": [c.get("name") for c in characters[:2]] if characters else [],
-            })
-        events = interpolated_events
-
-    group_size = max(1, (len(events) + desired_body_groups - 1) // desired_body_groups)
-    event_groups = _group_events(events, max_group_size=group_size)
-
-    chars_per_group = max(100, body_chars_total // max(1, len(event_groups)))
-
-    for group_idx, event_group in enumerate(event_groups):
-        body_segments = _generate_body_segment(
-            gateway=gateway,
-            events=event_group,
-            story=story,
-            scene_index=scene_index,
-            title=title,
-            characters=characters,
-            group_idx=group_idx,
-            total_groups=len(event_groups),
-            metadata=metadata,
-            target_chars=chars_per_group,
-        )
-
-        for seg in body_segments:
-            seg["segment_id"] = f"narration-{segment_counter:03d}"
-            segments.append(seg)
-            segment_counter += 1
-
-    # 3. Generate conclusion (SEMANTIC)
-    conclusion = _generate_conclusion(gateway, story, title, metadata, target_chars=conclusion_chars)
-    conclusion["segment_id"] = f"narration-{segment_counter:03d}"
-    conclusion["segment_type"] = "conclusion"
-    segments.append(conclusion)
-
-    # 4. Assemble script (DETERMINISTIC)
     total_chars = sum(len(s.get("text", "")) for s in segments)
     estimated_duration = total_chars / speaking_rate
 
