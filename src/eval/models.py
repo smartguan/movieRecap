@@ -41,6 +41,8 @@ class AudioVideoCouplingMetrics(BaseModel):
     max_shot_duration_seconds: float = 0.0
     dynamic_pacing_pass: bool = True
     av_semantic_alignment_score: float = Field(100.0, ge=0.0, le=100.0)
+    scene_content_match_score: float = Field(100.0, ge=0.0, le=100.0)
+    low_match_segments: list[str] = Field(default_factory=list)
     phase_mismatch_count: int = 0
     coupling_score: float = Field(100.0, ge=0.0, le=100.0)
     details: str = "Audio and video clips are tightly synchronized"

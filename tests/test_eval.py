@@ -293,3 +293,35 @@ def test_av_semantic_phase_alignment_fails_when_disjointed():
     assert av_dim.passed is False
 
 
+def test_av_scene_content_matching_eval():
+    """Verify that evaluate_deterministic evaluates content-level semantic alignment."""
+    script = {
+        "title": "诅咒",
+        "segments": [
+            {"segment_id": "narration-000", "text": "故事从东京理发店修剪发丝开始。", "supporting_scenes": [{"start_seconds": 200.0, "end_seconds": 230.0}]},
+            {"segment_id": "narration-001", "text": "跨海抵达台北，在老旧街巷调查。", "supporting_scenes": [{"start_seconds": 2600.0, "end_seconds": 2630.0}]},
+        ]
+    }
+    scene_index = {
+        "duration_seconds": 5000.0,
+        "scenes": [
+            {"scene_id": "sc-001", "start_seconds": 200.0, "end_seconds": 230.0, "transcript_text": "カットとカラーでお願いします"},
+            {"scene_id": "sc-002", "start_seconds": 2600.0, "end_seconds": 2630.0, "transcript_text": "私も台湾に行く"},
+        ]
+    }
+    edit_decisions = [
+        {"segment_id": "narration-000", "duration": 10.0, "source_start": 200.0, "source_end": 210.0, "text": script["segments"][0]["text"]},
+        {"segment_id": "narration-001", "duration": 10.0, "source_start": 2600.0, "source_end": 2610.0, "text": script["segments"][1]["text"]},
+    ]
+
+    metrics, dims, _ = evaluate_deterministic(
+        script=script,
+        scene_index=scene_index,
+        edit_decisions=edit_decisions,
+    )
+
+    assert metrics.av_coupling.scene_content_match_score >= 80.0
+    assert len(metrics.av_coupling.low_match_segments) == 0
+
+
+

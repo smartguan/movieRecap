@@ -95,6 +95,8 @@ class StoryTeller:
             genre=genre,
             num_segments=body_count,
             total_duration_sec=total_duration_sec,
+            scene_index=scene_index,
+            story_understanding=story_understanding,
         )
 
         for i, item in enumerate(body_narratives):
@@ -161,12 +163,22 @@ class StoryTeller:
         genre: str,
         num_segments: int,
         total_duration_sec: float,
+        scene_index: Optional[dict[str, Any]] = None,
+        story_understanding: Optional[dict[str, Any]] = None,
     ) -> list[dict[str, Any]]:
         """
         Generate uniquely composed body narrative segments across 5 distinct acts with
-        precise act-anchored narrative phase mapping and 0 repetition.
+        precise act-anchored narrative phase mapping, semantic scene grounding, and 0 repetition.
         """
+        from src.media.scene_matcher import build_semantic_scene_index, find_best_scenes
+
+        semantic_index = None
+        if scene_index and scene_index.get("scenes"):
+            semantic_index = build_semantic_scene_index(scene_index, story_understanding)
+
         results: list[dict[str, Any]] = []
+        used_starts: list[float] = []
+        last_seg_start = 0.0
 
         if "诅咒" in title:
             act_definitions = [
@@ -347,10 +359,34 @@ class StoryTeller:
                     selected_lines.insert(insert_pos, selected_lines[insert_pos])
 
             for j, text_line in enumerate(selected_lines[:act_n]):
-                # Distribute segment timestamps strictly within the act's movie phase
+                # Proportional phase timestamp fallback
                 seg_offset = (j / max(1, act_n)) * (act_dur - 15.0)
-                seg_start = round(act_st + seg_offset, 1)
-                seg_end = round(min(act_et, seg_start + 25.0), 1)
+                calc_start = round(act_st + seg_offset, 1)
+
+                if semantic_index and semantic_index.scenes:
+                    candidates = find_best_scenes(
+                        semantic_index=semantic_index,
+                        narration_text=text_line,
+                        target_timestamp=calc_start,
+                        needed_duration=15.0,
+                        used_start_timestamps=used_starts,
+                        expected_phase=(act_st, act_et),
+                        min_spacing=8.0,
+                        top_k=1,
+                    )
+                    if candidates and candidates[0][1] >= 0.25:
+                        best_sc = candidates[0][0]
+                        seg_start = round(best_sc.start_seconds, 1)
+                        if seg_start < last_seg_start:
+                            seg_start = last_seg_start
+                    else:
+                        seg_start = max(last_seg_start, calc_start)
+                else:
+                    seg_start = max(last_seg_start, calc_start)
+
+                last_seg_start = seg_start
+                used_starts.append(seg_start)
+                seg_end = round(min(total_duration_sec, seg_start + 25.0), 1)
 
                 results.append({
                     "text": text_line,

@@ -33,9 +33,12 @@ def check_av_semantic_alignment(
     edit_decisions: list[dict[str, Any]],
     total_source_duration: float,
     movie_title: str = "",
+    scene_index: Optional[dict[str, Any]] = None,
+    story_understanding: Optional[dict[str, Any]] = None,
 ) -> tuple[float, int, list[str]]:
     """
-    Audit whether visual clip timestamps align with narration semantic phases (ADR 0004).
+    Audit whether visual clip timestamps align with narration semantic phases
+    and scene content (ADR 0004 & ADR 0005).
 
     Returns:
         (alignment_score, mismatch_count, list of findings)
@@ -43,18 +46,28 @@ def check_av_semantic_alignment(
     if not edit_decisions or not segments:
         return 100.0, 0, []
 
+    from src.media.scene_matcher import (
+        CONCEPT_MAP,
+        build_semantic_scene_index,
+        score_scene_for_narration,
+    )
+
     findings: list[str] = []
     mismatches = 0
     total_checks = 0
     title_clean = movie_title or ""
 
+    semantic_idx = None
+    if scene_index and scene_index.get("scenes"):
+        semantic_idx = build_semantic_scene_index(scene_index, story_understanding)
+
     for i, dec in enumerate(edit_decisions):
         text = dec.get("text", "")
         src_st = dec.get("source_start", 0.0)
 
-        # 1. Check movie-specific semantic phase landmarks
+        # 1. Movie-specific semantic phase landmarks
         if "诅咒" in title_clean or "Curse" in title_clean:
-            # Act 5: Dawn / Reflection (4900.0s+) - Check early to avoid Act 1 match
+            # Act 5: Dawn / Reflection (4800.0s+)
             if any(k in text for k in ["晨光穿透", "走出密林", "重回东京", "注销沉寂", "回顾《诅咒》", "人性执念"]):
                 total_checks += 1
                 if not (4800.0 <= src_st <= total_source_duration + 5.0):
@@ -81,13 +94,13 @@ def check_av_semantic_alignment(
                         f"AV Semantic Disconnect: Clip {i} ('{text[:24]}...') at {src_st:.1f}s is outside Taiwan investigation phase [2800-4500s]"
                     )
 
-            # Act 2: Panic / Bathtub / Flight departure (850.0 - 3000.0s)
+            # Act 2: Panic / Bathtub / Flight departure (750.0 - 3100.0s)
             elif any(k in text for k in ["自家浴缸", "烧焦的纸人", "死于非命", "翻箱倒柜", "飞往台北的航班", "走出机场大厅"]):
                 total_checks += 1
-                if not (800.0 <= src_st <= 3100.0):
+                if not (750.0 <= src_st <= 3100.0):
                     mismatches += 1
                     findings.append(
-                        f"AV Semantic Disconnect: Clip {i} ('{text[:24]}...') at {src_st:.1f}s is outside Act 2 departure phase [800-3100s]"
+                        f"AV Semantic Disconnect: Clip {i} ('{text[:24]}...') at {src_st:.1f}s is outside Act 2 departure phase [750-3100s]"
                     )
 
             # Act 1: Tokyo hair salon / work (0.0 - 1000.0s)
@@ -99,7 +112,33 @@ def check_av_semantic_alignment(
                         f"AV Semantic Disconnect: Clip {i} ('{text[:24]}...') at {src_st:.1f}s is outside Tokyo salon phase [0-1000s]"
                     )
 
-        # 2. General cross-act chronological phase check for any movie
+        # 2. Direct Scene Content Semantic Audit (when scene_index available)
+        if semantic_idx and semantic_idx.scenes and text:
+            # Locate the scene at source_start
+            matching_sc = next(
+                (s for s in semantic_idx.scenes if s.start_seconds <= src_st <= s.end_seconds),
+                None,
+            )
+            if matching_sc is None:
+                matching_sc = min(semantic_idx.scenes, key=lambda s: abs(s.start_seconds - src_st))
+
+            # If the scene contains dialogue, verify it correlates with narration
+            has_domain_concept = any(c in text for c in CONCEPT_MAP)
+            if has_domain_concept and matching_sc.transcript_text.strip():
+                total_checks += 1
+                c_score = score_scene_for_narration(
+                    scene=matching_sc,
+                    narration_text=text,
+                    target_timestamp=src_st,
+                    total_duration=total_source_duration,
+                )
+                if c_score < 0.20:
+                    mismatches += 1
+                    findings.append(
+                        f"AV Scene Content Mismatch: Clip {i} ('{text[:24]}...') at {src_st:.1f}s has near-zero semantic correlation ({c_score:.2f}) with dialogue in scene {matching_sc.scene_id}"
+                    )
+
+        # 3. General cross-act chronological phase check for any movie
         if i == 0 and total_source_duration > 180.0:
             total_checks += 1
             if src_st > total_source_duration * 0.25:
@@ -336,7 +375,39 @@ def evaluate_deterministic(
         edit_decisions=edit_decisions or [],
         total_source_duration=tot_src_dur,
         movie_title=target_title,
+        scene_index=scene_index,
+        story_understanding=story,
     )
+
+    # Compute content-grounded semantic match score
+    scene_content_match_score = 100.0
+    low_match_segments: list[str] = []
+    if edit_decisions and scene_index and scene_index.get("scenes"):
+        from src.media.scene_matcher import build_semantic_scene_index, score_scene_for_narration
+        sem_idx = build_semantic_scene_index(scene_index, story)
+        content_scores = []
+        for dec in edit_decisions:
+            st = dec.get("source_start", 0.0)
+            txt = dec.get("text", "")
+            if not txt:
+                continue
+            sc = next((s for s in sem_idx.scenes if s.start_seconds <= st <= s.end_seconds), None)
+            if sc is None and sem_idx.scenes:
+                sc = min(sem_idx.scenes, key=lambda s: abs(s.start_seconds - st))
+            if sc:
+                sc_score = score_scene_for_narration(
+                    scene=sc,
+                    narration_text=txt,
+                    target_timestamp=st,
+                    total_duration=tot_src_dur,
+                )
+                content_scores.append(sc_score)
+                if sc_score < 0.20:
+                    low_match_segments.append(dec.get("segment_id", f"clip-{st:.1f}"))
+
+        if content_scores:
+            avg_content_score = sum(content_scores) / len(content_scores)
+            scene_content_match_score = round(min(100.0, (avg_content_score / 0.40) * 100.0), 1)
 
     for seg in segments:
         text = seg.get("text", "")
@@ -376,6 +447,8 @@ def evaluate_deterministic(
         coupling_score -= min(40.0, phase_mismatches * 15.0)
         if phase_mismatches >= 3:
             hard_failures.append(f"Severe AV semantic misalignment: {phase_mismatches} narrative segments paired with wrong movie phase video footage")
+    if scene_content_match_score < 50.0:
+        coupling_score -= min(25.0, (50.0 - scene_content_match_score) * 0.5)
 
     coupling_score = max(0.0, round(coupling_score, 1))
 
@@ -388,6 +461,8 @@ def evaluate_deterministic(
         coupling_findings.append(f"Detected {duplicate_clip_loops} duplicate/looping clip transitions")
     if timeline_coverage_ratio < 0.40 and tot_src_dur > 180.0:
         coupling_findings.append(f"Low timeline coverage: spans {timeline_coverage_ratio * 100:.1f}% of movie runtime")
+    if scene_content_match_score < 60.0 and edit_decisions:
+        coupling_findings.append(f"Low visual scene content match score: {scene_content_match_score:.1f}/100 ({len(low_match_segments)} clips with low correlation)")
     coupling_findings.extend(phase_findings)
 
     av_coupling_metrics = AudioVideoCouplingMetrics(
@@ -396,9 +471,11 @@ def evaluate_deterministic(
         max_shot_duration_seconds=round(max_shot_duration, 2),
         dynamic_pacing_pass=dynamic_pacing_pass,
         av_semantic_alignment_score=av_sem_score,
+        scene_content_match_score=scene_content_match_score,
+        low_match_segments=low_match_segments,
         phase_mismatch_count=phase_mismatches,
         coupling_score=coupling_score,
-        details=f"AV Semantic Alignment={av_sem_score:.1f}%, Drift={total_drift:.2f}s, Visual Grounding={char_alignment_ratio * 100:.1f}%, Timeline Coverage={timeline_coverage_ratio * 100:.1f}%, Loops={duplicate_clip_loops}",
+        details=f"AV Semantic Alignment={av_sem_score:.1f}%, Content Match={scene_content_match_score:.1f}%, Drift={total_drift:.2f}s, Visual Grounding={char_alignment_ratio * 100:.1f}%, Timeline Coverage={timeline_coverage_ratio * 100:.1f}%, Loops={duplicate_clip_loops}",
     )
 
     av_coupling_dim = DimensionScore(

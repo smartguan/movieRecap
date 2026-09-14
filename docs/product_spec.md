@@ -1,10 +1,10 @@
 # Movie Commentary Autopilot
 
 **Product Requirements Document (PRD)**  
-**Version:** 0.3  
-**Date:** September 13, 2026  
+**Version:** 0.4  
+**Date:** September 14, 2026  
 **Status:** Active  
-**ADR References:** [ADR 0004: Audio-Visual Semantic Alignment](docs/adr/0004_audio_visual_semantic_alignment.md)  
+**ADR References:** [ADR 0004: Audio-Visual Semantic Alignment](docs/adr/0004_audio_visual_semantic_alignment.md) (Superseded), [ADR 0005: Content-Grounded Scene Selection](docs/adr/0005_content_grounded_scene_selection.md)  
 
 ## 1. Executive summary
 
@@ -277,7 +277,7 @@ The clip planner shall:
 
 There shall be no feature intended to bypass or defeat copyright-detection systems.
 
-Candidate retrieval must be token-efficient. The system shall first narrow scenes using timestamps, character labels, transcript search, embeddings, sensitivity labels, and edit constraints. A multimodal model may rank or judge the reduced candidate set; it must not repeatedly inspect the entire movie for every narration segment.
+Candidate retrieval must be token-efficient and content-grounded (ADR 0005). The system shall build an in-memory Semantic Scene Index (`src/media/scene_matcher.py`) combining subtitle transcripts, local summaries, character presence, and bilingual domain concept mappings. Scenes are selected via a multi-signal affinity scoring model (concept mapping, transcript token overlap, local summary correlation, phase window alignment, and chronological smoothness) while enforcing anti-looping and minimum clip spacing ($8.0$s). Multi-modal models may judge reduced candidate sets if necessary; full-movie vision LLM scanning is strictly prohibited.
 
 ### FR-8: Video assembly
 

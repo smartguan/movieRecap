@@ -215,6 +215,7 @@ def run_stage_generate(
         voice_assets=voice_assets,
         source_video_path=source_video_path,
         clips_dir=clips_dir,
+        story_understanding=story_dict,
     )
     (stage_work_dir / "edit_plan.json").write_text(
         json.dumps([d.model_dump() if hasattr(d, "model_dump") else d for d in edit_decisions], indent=2, ensure_ascii=False),

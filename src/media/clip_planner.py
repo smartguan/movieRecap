@@ -53,31 +53,41 @@ def plan_and_extract_clips(
     script: dict[str, Any] | None = None,
     source_video_path: Path | str | None = None,
     clips_dir: Path | str | None = None,
+    story_understanding: dict[str, Any] | None = None,
     **kwargs: Any,
 ) -> list[dict[str, Any]]:
     """
     Plan edit decisions and extract trimmed video segments.
-    Enforces timeline progression, full-movie coverage, and anti-looping deduplication.
+    Enforces semantic content matching, timeline progression, full-movie coverage,
+    and anti-looping deduplication (ADR 0005).
 
     Args:
         source_video: Path to source movie video file.
         voice_assets: List of voice assets with exact duration per segment.
-        scene_index: Scene index with start/end timestamps.
+        scene_index: Scene index with start/end timestamps and transcripts.
         output_clips_dir: Directory to store trimmed clip files.
         script: Optional script dict.
         source_video_path: Alias for source_video.
         clips_dir: Alias for output_clips_dir.
+        story_understanding: Structured story understanding dict with local summaries.
 
     Returns:
         List of edit decisions with clip paths and timeline positions.
     """
+    from src.media.scene_matcher import build_semantic_scene_index, find_best_scenes
+
     src_vid_path = Path(source_video or source_video_path or "")
     out_dir = Path(output_clips_dir or clips_dir or "clips")
     out_dir.mkdir(parents=True, exist_ok=True)
 
     scenes_idx = scene_index or {}
-    scenes = scenes_idx.get("scenes", [])
     total_source_duration = _get_source_duration(src_vid_path, scenes_idx)
+
+    # Build semantic scene index
+    semantic_index = build_semantic_scene_index(
+        scene_index=scenes_idx,
+        story_understanding=story_understanding,
+    )
 
     # Normalize voice_assets to dicts
     assets_raw = voice_assets or []
@@ -93,73 +103,54 @@ def plan_and_extract_clips(
     total_segments = len(assets)
     edit_decisions: list[dict[str, Any]] = []
     used_start_timestamps: list[float] = []
+    proposed_supporting_starts: list[float] = []
     last_source_start: float = -1.0
 
     for i, asset in enumerate(assets):
         seg_id = asset.get("segment_id", f"narration-{i:03d}")
         needed_duration = float(asset.get("duration", 4.0))
+        text = asset.get("text", "")
         supporting = asset.get("supporting_scenes", [])
 
-        # Proportional timeline anchor for this segment across the entire movie
+        # Proportional timeline anchor across the entire movie
         target_timeline_ratio = i / max(1, total_segments)
         target_timestamp = target_timeline_ratio * max(0.0, total_source_duration - needed_duration)
 
-        chosen_start: float | None = None
-
-        # 1. Inspect proposed supporting scene timestamp (Act-anchored)
+        expected_phase = None
         if supporting and isinstance(supporting, list) and isinstance(supporting[0], dict):
             prop_st = float(supporting[0].get("start_seconds", 0.0))
             prop_et = float(supporting[0].get("end_seconds", prop_st + needed_duration))
-
-            # Validate against out-of-bounds, duplicate looping, or severe backward leaps
-            is_valid_range = (0.0 <= prop_st <= total_source_duration)
-            is_duplicate = any(abs(prop_st - prev_st) < 8.0 for prev_st in used_start_timestamps)
+            is_dup = any(abs(prop_st - prev) < 15.0 for prev in used_start_timestamps)
             is_severe_loop = (last_source_start > 0 and prop_st < last_source_start - 120.0)
+            is_repeated_proposal = (prop_st in proposed_supporting_starts)
+            proposed_supporting_starts.append(prop_st)
 
-            if is_valid_range and not is_duplicate and not is_severe_loop:
-                if scenes:
-                    # Find matching scene in scene_index near prop_st that hasn't been used recently
-                    best_scene = None
-                    best_diff = float("inf")
-                    for s in scenes:
-                        st = float(s.get("start_seconds", 0.0))
-                        if any(abs(st - prev_st) < 8.0 for prev_st in used_start_timestamps):
-                            continue
-                        # Prefer scenes within the narrative phase window [prop_st - 40s, prop_et + 40s]
-                        diff = abs(st - prop_st)
-                        if diff < 60.0 and diff < best_diff:
-                            best_diff = diff
-                            best_scene = s
+            if 0.0 <= prop_st <= total_source_duration and not is_dup and not is_severe_loop and not is_repeated_proposal:
+                expected_phase = (prop_st - 40.0, prop_et + 40.0)
 
-                    if best_scene:
-                        chosen_start = float(best_scene.get("start_seconds", prop_st))
-                    else:
-                        chosen_start = prop_st
-                else:
-                    chosen_start = prop_st
+        # Query semantic scene matcher for best content-matched candidate
+        candidates = find_best_scenes(
+            semantic_index=semantic_index,
+            narration_text=text,
+            target_timestamp=target_timestamp,
+            needed_duration=needed_duration,
+            used_start_timestamps=used_start_timestamps,
+            expected_phase=expected_phase,
+            last_source_start=last_source_start,
+            min_spacing=8.0,
+            top_k=1,
+        )
 
-        # 2. If supporting scene is missing, invalid, or duplicate loop, find closest unused scene to target_timestamp
-        if chosen_start is None:
-            if scenes:
-                best_scene = None
-                best_diff = float("inf")
-                for s in scenes:
-                    st = float(s.get("start_seconds", 0.0))
-                    if any(abs(st - prev_st) < 8.0 for prev_st in used_start_timestamps):
-                        continue
-                    diff = abs(st - target_timestamp)
-                    if diff < best_diff:
-                        best_diff = diff
-                        best_scene = s
+        matched_scene_id = ""
+        best_score = 0.0
+        if candidates:
+            best_scene, best_score = candidates[0]
+            chosen_start = best_scene.start_seconds
+            matched_scene_id = best_scene.scene_id
+        else:
+            chosen_start = target_timestamp
 
-                if best_scene:
-                    chosen_start = float(best_scene.get("start_seconds", target_timestamp))
-                else:
-                    chosen_start = target_timestamp
-            else:
-                chosen_start = target_timestamp
-
-        # 3. Final clamping to ensure valid video boundaries
+        # Final clamping to ensure valid video boundaries
         src_start = max(0.0, min(chosen_start, max(0.0, total_source_duration - needed_duration)))
         src_end = src_start + needed_duration
 
@@ -208,6 +199,8 @@ def plan_and_extract_clips(
             "timeline_end": asset.get("end_time", needed_duration),
             "source_start": src_start,
             "source_end": src_end,
+            "scene_id": matched_scene_id,
+            "semantic_score": best_score,
         }
         edit_decisions.append(decision)
 

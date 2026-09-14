@@ -1,6 +1,6 @@
 # ADR 0004: Audio-Visual Semantic Alignment and Phase-Anchored Clip Extraction
 
-**Status:** Accepted  
+**Status:** Superseded by [ADR 0005](file:///Users/zeyuanguan/Work/movie_recap/docs/adr/0005_content_grounded_scene_selection.md)  
 **Date:** 2026-09-13  
 **Deciders:** Core Engineering Team  
 
