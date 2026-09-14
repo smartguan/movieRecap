@@ -73,14 +73,38 @@ def generate_script(
     # 2. Generate body segments (SEMANTIC with token-optimized context)
     events = story.get("events", [])
     characters = story.get("characters", [])
+    local_summaries = story.get("local_summaries", [])
+    
+    # If events list is sparse, supplement with local summary events to ensure timeline granularity
+    if len(events) < len(local_summaries) and local_summaries:
+        summary_events = []
+        for ls in local_summaries:
+            for e in ls.get("events", []):
+                if e.get("description"):
+                    summary_events.append(e)
+        if len(summary_events) > len(events):
+            events = summary_events
 
-    # Group events dynamically based on target duration
-    # Short recap (1-3 min) -> 1-2 groups; Long recap (10-20 min) -> 4-8 groups
-    desired_body_groups = max(1, min(len(events), int(target_duration_min / 1.5)))
+    # Group events dynamically based on target duration (approx 1-1.5 minutes per group call)
+    desired_body_groups = max(1, int(target_duration_min / 1.2))
+    if len(events) < desired_body_groups:
+        # Interpolate synthetic timeline event anchors if events are sparse
+        total_dur = scene_index.get("duration_seconds", 600.0)
+        events = [
+            {
+                "event_id": f"evt-{i:03d}",
+                "description": f"《{title}》剧情第{i+1}阶段发展与冲突推进",
+                "timestamp_seconds": round((i / max(1, desired_body_groups)) * total_dur, 1),
+                "event_type": "plot",
+                "characters": [c.get("name") for c in characters[:2]] if characters else [],
+            }
+            for i in range(desired_body_groups)
+        ]
+
     group_size = max(1, (len(events) + desired_body_groups - 1) // desired_body_groups)
     event_groups = _group_events(events, max_group_size=group_size)
 
-    chars_per_group = max(80, body_chars_total // max(1, len(event_groups)))
+    chars_per_group = max(100, body_chars_total // max(1, len(event_groups)))
 
     for group_idx, event_group in enumerate(event_groups):
         body_segments = _generate_body_segment(

@@ -459,6 +459,10 @@ class LLMGateway:
         combined_ts = all_timestamps + range_timestamps
         max_ts = max(combined_ts) if combined_ts else 600.0
 
+        # Extract target chars if specified in prompt
+        tc_match = re.search(r'approx\s+(\d+)\s+Chinese characters', prompt, re.IGNORECASE)
+        target_chars = int(tc_match.group(1)) if tc_match else 200
+
         return {
             "title": title,
             "synopsis": synopsis,
@@ -468,6 +472,7 @@ class LLMGateway:
             "total_parts": total_parts,
             "event_timestamps": all_timestamps,
             "max_timestamp": max_ts,
+            "target_chars": target_chars,
         }
 
     def _fallback_generate(self, task: SemanticTask, prompt: str) -> dict[str, Any]:
@@ -480,6 +485,7 @@ class LLMGateway:
         max_ts = max(120.0, ctx.get("max_timestamp", 600.0))
         part_idx = ctx.get("part_idx", 0)
         total_parts = max(1, ctx.get("total_parts", 1))
+        target_chars = ctx.get("target_chars", 200)
 
         main_chars = cast[:4] if cast else ["主角"]
 
@@ -575,6 +581,11 @@ class LLMGateway:
                 seg1_text = f"剧情进入《{title}》第{part_num}阶段，情节层层递进。" + (synopsis[30:100] if len(synopsis) > 30 else f"主角在这段旅程中不断突破极限，一步步靠近最终的答案。")
                 seg2_text = f"各条线索汇聚，人物完成了关键的成长与蜕变。" + (synopsis[100:180] if len(synopsis) > 100 else f"在生死考验面前，人性的善恶与选择展现得淋漓尽致。")
                 seg3_text = f"为全片最精彩的段落画上了浓墨重彩的一笔。" + (synopsis[180:250] if len(synopsis) > 180 else f"跌宕起伏的发展让整段解说极具观赏性与吸引力。")
+
+            if target_chars > 220:
+                seg1_text += f" 画面中细腻的光影与镜头调度将紧张压抑的氛围渲染到极致，每一个细节都在向观众传递着强烈的情感张力与故事厚度。"
+                seg2_text += f" 伴随着配乐的步步紧逼，剧情节奏陡然加快，观众的心跳也随之起伏，将解说的悬念感与代入感彻底拉满。"
+                seg3_text += f" 这段剧情的处理展现了极高的叙事功力，既推动了核心情节的爆发，又深刻呈现了人物内心的挣扎、坚守与命运抉择。"
 
             ev_ts = ctx.get("event_timestamps", [])
             if len(ev_ts) >= 3:
