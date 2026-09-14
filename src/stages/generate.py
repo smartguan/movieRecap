@@ -132,13 +132,14 @@ def run_stage_generate(
     """
     stage2_dir = _resolve_stage2_dir(stage2_input)
     slug = stage2_dir.name
+    version_suffix = f"_{algo_version.lower()}" if algo_version.lower() == "v3" else ""
     stage_work_dir = (
-        Path(stage3_dir) if stage3_dir else Path("data/stages/3_generated") / slug
+        Path(stage3_dir) if stage3_dir else Path("data/stages/3_generated") / f"{slug}{version_suffix}"
     )
     stage_work_dir.mkdir(parents=True, exist_ok=True)
 
     platform_base_dir = Path(output_dir) if output_dir else Path("output")
-    platform_pkg_dir = platform_base_dir / slug
+    platform_pkg_dir = platform_base_dir / f"{slug}{version_suffix}"
     platform_pkg_dir.mkdir(parents=True, exist_ok=True)
 
     # 1. Load Stage 2 Artifacts
