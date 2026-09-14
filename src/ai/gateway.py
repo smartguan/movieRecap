@@ -662,6 +662,10 @@ class LLMGateway:
                 "overall_quality_score": 0.94
             }, ensure_ascii=False)
 
+        elif task_name == "synthesize_grounded_narration":
+            # Signal caller to use sequence-grounded deterministic synthesizer
+            content = json.dumps({"text": ""}, ensure_ascii=False)
+
         else:
             content = json.dumps({"status": "ok", "task": task_name, "result": "completed"})
 

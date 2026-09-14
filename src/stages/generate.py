@@ -233,6 +233,7 @@ def run_stage_generate(
                 "version": "v3",
                 "segments": script_segments,
                 "target_speaking_rate": 240.0,
+                "target_range_minutes": duration_range,
             }
 
         script_file.write_text(
@@ -293,6 +294,17 @@ def run_stage_generate(
         edit_decisions=[d.model_dump() if hasattr(d, "model_dump") else d for d in edit_decisions],
         timeline_audio_duration=total_audio_dur,
     )
+    try:
+        report_json = qa_report.model_dump_json(indent=2) if hasattr(qa_report, "model_dump_json") else json.dumps(qa_report, ensure_ascii=False)
+    except Exception:
+        report_json = json.dumps({"score": getattr(qa_report, "total_score", 0.0)}, ensure_ascii=False)
+    (stage_work_dir / "recap_quality_report.json").write_text(str(report_json), encoding="utf-8")
+
+    try:
+        report_md = detector.format_markdown_report(qa_report)
+    except Exception:
+        report_md = f"# Quality Report\nScore: {getattr(qa_report, 'total_score', 0.0)}\n"
+    (stage_work_dir / "recap_quality_report.md").write_text(str(report_md), encoding="utf-8")
 
     # 8. Export Multi-Platform Bundles
     assets_dir = stage_work_dir / "assets"

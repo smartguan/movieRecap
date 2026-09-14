@@ -424,4 +424,142 @@ def test_storyteller_continuity_detects_unbridged_scene_jumps():
     assert any("without connective transition phrasing" in e for e in metrics.discontinuity_events)
 
 
+def test_check_av_semantic_alignment_detects_activity_conflict():
+    """Verify that claiming salon haircut during a kitchen dining scene triggers an AV conflict."""
+    from src.eval.deterministic_eval import check_av_semantic_alignment
+
+    segments = [
+        {
+            "segment_id": "narration-002",
+            "text": "午休时分，理发师正在为顾客修剪发丝，交流发型细节。",
+            "supporting_scenes": [{"start_seconds": 332.0, "end_seconds": 380.0}],
+        }
+    ]
+    edit_decisions = [
+        {
+            "segment_id": "narration-002",
+            "source_start": 332.0,
+            "source_end": 380.0,
+            "text": "午休时分，理发师正在为顾客修剪发丝，交流发型细节。",
+        }
+    ]
+    scene_index = {
+        "scenes": [
+            {
+                "scene_id": "scene-0037",
+                "start_seconds": 332.0,
+                "end_seconds": 380.0,
+                "transcript_text": "サイコーンでしょ食べる 今日はいい感じで出来ました いただきます",
+                "characters": ["女主"],
+            }
+        ]
+    }
+
+    score, mismatches, findings = check_av_semantic_alignment(
+        segments=segments,
+        edit_decisions=edit_decisions,
+        total_source_duration=1000.0,
+        movie_title="Generic Movie",
+        scene_index=scene_index,
+    )
+
+    assert mismatches >= 1
+    assert score < 100.0
+    assert any("AV Activity Conflict" in f for f in findings)
+
+
+def test_check_av_semantic_alignment_passes_when_grounded():
+    """Verify that matching cooking narration to dining dialogue passes with 100%."""
+    from src.eval.deterministic_eval import check_av_semantic_alignment
+
+    segments = [
+        {
+            "segment_id": "narration-002",
+            "text": "夜幕降临，两人回到公寓厨房一起下厨烹饪家常晚餐，享用热气腾腾的美食。",
+            "supporting_scenes": [{"start_seconds": 332.0, "end_seconds": 380.0}],
+        }
+    ]
+    edit_decisions = [
+        {
+            "segment_id": "narration-002",
+            "source_start": 332.0,
+            "source_end": 380.0,
+            "text": "夜幕降临，两人回到公寓厨房一起下厨烹饪家常晚餐，享用热气腾腾的美食。",
+        }
+    ]
+    scene_index = {
+        "scenes": [
+            {
+                "scene_id": "scene-0037",
+                "start_seconds": 332.0,
+                "end_seconds": 380.0,
+                "transcript_text": "サイコーンでしょ食べる 今日はいい感じで出来ました いただきます",
+                "characters": ["女主"],
+            }
+        ]
+    }
+
+    score, mismatches, findings = check_av_semantic_alignment(
+        segments=segments,
+        edit_decisions=edit_decisions,
+        total_source_duration=1000.0,
+        movie_title="Generic Movie",
+        scene_index=scene_index,
+    )
+
+    assert mismatches == 0
+    assert score == 100.0
+
+
+def test_slop_detector_blocks_grade_s_when_critical_dimension_fails():
+    """Verify that an AV coupling failure blocks Grade S and marks the project as failed (Tier F)."""
+    detector = SlopDetector()
+    mismatched_script = {
+        "title": "Generic Movie",
+        "project_id": "test-mismatch",
+        "estimated_duration_minutes": 2.0,
+        "segments": [
+            {
+                "segment_id": "narration-000",
+                "segment_type": "hook",
+                "text": "如果一个离奇的秘密被揭晓，你会如何选择？深度解说高能电影《Generic Movie》。",
+                "supporting_scenes": [{"start_seconds": 10.0, "end_seconds": 50.0}],
+            },
+            {
+                "segment_id": "narration-001",
+                "segment_type": "plot_and_commentary",
+                "text": "女主在理发店修剪发丝，理发师正在给顾客洗头设计发型。",
+                "supporting_scenes": [{"start_seconds": 332.0, "end_seconds": 380.0}],
+            },
+        ],
+    }
+    scene_index = {
+        "scenes": [
+            {"scene_id": "s1", "start_seconds": 10.0, "end_seconds": 50.0, "transcript_text": "こんにちは"},
+            {"scene_id": "s2", "start_seconds": 332.0, "end_seconds": 380.0, "transcript_text": "サイコーンでしょ食べる いただきます 料理"},
+        ]
+    }
+    edit_decisions = [
+        {"segment_id": "narration-000", "source_start": 10.0, "source_end": 50.0, "duration": 40.0, "text": "如果一个离奇的秘密被揭晓，你会如何选择？深度解说高能电影《Generic Movie》。"},
+        {"segment_id": "narration-001", "source_start": 332.0, "source_end": 380.0, "duration": 48.0, "text": "女主在理发店修剪发丝，理发师正在给顾客洗头设计发型。"},
+    ]
+
+    report = detector.evaluate_script(
+        script=mismatched_script,
+        scene_index=scene_index,
+        edit_decisions=edit_decisions,
+    )
+
+    # AV coupling dimension must fail due to salon vs cooking conflict
+    av_dim = next((d for d in report.dimensions if d.name == "Cross-Modal Audio-Visual Coupling"), None)
+    assert av_dim is not None
+    assert av_dim.passed is False
+
+    # The entire report MUST fail and receive TIER_F, NOT TIER_S
+    assert report.passed is False
+    assert report.grade == EvalGrade.TIER_F
+    assert "FAILED" in report.summary_verdict
+
+
+
 

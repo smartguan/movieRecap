@@ -139,8 +139,18 @@ class SlopDetector:
         raw_score = sum(d.score * d.weight for d in all_dims)
         total_score = min(100.0, max(0.0, round(raw_score, 1)))
 
+        # Critical Dimensions Gate (ADR 0007)
+        critical_dims = [
+            "Movie Identity & Anti-Contamination",
+            "Cleanliness & Formatting",
+            "Evidence & Temporal Alignment",
+            "Cross-Modal Audio-Visual Coupling",
+            "Storyteller Narrative Continuity",
+        ]
+        failed_critical = [d.name for d in all_dims if d.name in critical_dims and not d.passed]
+
         # Assign Grade
-        if is_hard_fail or total_score < 70.0:
+        if is_hard_fail or failed_critical or total_score < 70.0:
             grade = EvalGrade.TIER_F
             passed = False
             is_slop = True
@@ -164,6 +174,8 @@ class SlopDetector:
         # Generate summary verdict
         if is_hard_fail:
             verdict = f"FAILED: Hard deterministic failure detected ({det_metrics.hard_failures[0]})"
+        elif failed_critical:
+            verdict = f"FAILED: Critical quality gate failed ({', '.join(failed_critical)})"
         elif is_slop:
             verdict = f"REJECTED: Quality score ({total_score:.1f}/100) indicates AI Slop risk"
         else:

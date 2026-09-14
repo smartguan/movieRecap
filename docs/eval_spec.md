@@ -1,8 +1,8 @@
 # Movie Commentary Evaluation & Anti-AI-Slop Quality Specification
 
-**Version:** 1.1  
+**Version:** 1.2  
 **Status:** Active  
-**Last Updated:** 2026-09-13  
+**Last Updated:** 2026-09-14  
 **Superseded By:** N/A  
 
 ---
@@ -13,8 +13,9 @@ The **Movie Commentary Autopilot** produces automated long-form Mandarin comment
 
 This specification establishes:
 1. A **two-tier Evaluation Infrastructure** to detect, grade, and prevent AI Slop before video generation or publishing.
-2. A dedicated **Cross-Modal Audio-Visual Coupling** metric ensuring visual scene cuts match narration content and pacing.
-3. Strict **Evaluator Token Cost Profiling** measuring per-metric token spend and verifying that deterministic checks consume **0 tokens**.
+2. A dedicated **Cross-Modal Audio-Visual Coupling** metric ensuring visual scene cuts match narration content and pacing, with generic **Activity-Domain Conflict Auditing** (ADR 0007).
+3. Strict **Critical-Dimension Gating**: failure on any core integrity dimension forces immediate `Tier F` rejection regardless of aggregate score.
+4. Strict **Evaluator Token Cost Profiling** measuring per-metric token spend and verifying that deterministic checks consume **0 tokens**.
 
 ---
 
@@ -27,7 +28,7 @@ An automated movie recap is classified as **AI Slop** if it exhibits any of the 
 | **Formulaic Clichés & Templates** | Overuse of stereotypical transition phrases (*"不得不说"*, *"让我们拭目以待"*, *"事情并没有那么简单"*, *"镜头一转"*, *"总而言之"*). | Deterministic (Regex / Ban-list matcher) |
 | **Passive Dry Summary** | Monotonous "Character A did X, then Character B did Y" without editorial interpretation, cultural context, directorial criticism, humor, or thematic analysis. | Semantic LLM Judge (Commentary Depth Rubric) |
 | **Repetitive Vocabulary & N-grams** | Low lexical diversity, looping phrases, high token repetition within short windows. | Deterministic (Type-Token Ratio, Distinct-2/3 n-grams) |
-| **Audio-Visual Disconnect** | Narration discusses character emotions/dialogue while video shows unrelated scenery, or shot lingers statically for >12s during intense commentary. | Cross-Modal AV Matcher & Shot Duration Analysis |
+| **Audio-Visual Disconnect & Activity Conflict** | Narration describes an activity (e.g. hair salon haircutting) mutually exclusive with footage transcript/action (e.g. home kitchen cooking), or shot lingers statically for >12s during intense commentary. | Cross-Modal AV Matcher & Activity Domain Conflict Scanner (ADR 0007) |
 | **Evidence & Timeline Disconnect** | Commentary describes scenes that do not match the underlying video clip timestamps or reveals climax spoilers in the opening. | Deterministic (Timestamp mapping & chronological validation) |
 | **Mechanical & Formatting Leaks** | Raw JSON keys, punctuation words synthesized by TTS (*"下划线"*, *"引号"*), code blocks, unparsed markdown. | Deterministic (Cleanliness scanner) |
 | **Robotic Delivery & Pacing** | Monotone sentence length, abnormal speaking rates (<200 or >290 chars/min), excessive subtitle gaps or overlaps. | Deterministic (Speech timing & audio alignment) |
@@ -45,10 +46,11 @@ graph TD
     B --> B2[Lexical Diversity & Cliché Scanner]
     B --> B3[Evidence Grounding & Timeline Check]
     B --> B4[Speech Rate & Pacing Sync]
-    B --> B5[Cross-Modal AV Coupling & Shot Dynamics]
+    B --> B5[Cross-Modal AV Coupling & Activity Conflict Audit]
+    B --> B6[Storyteller Narrative Continuity]
     
-    B1 & B2 & B3 & B4 & B5 --> C{Deterministic Gate Passed?}
-    C -- Hard Fail --> F[Reject: Immediate Deterministic Failure - 0 Tokens Spent]
+    B1 & B2 & B3 & B4 & B5 & B6 --> C{Critical Dimensions Passed?}
+    C -- Hard Fail on Critical Dim --> F[Reject: Immediate Tier F - 0 Tokens Spent]
     C -- Pass / Warn --> D[Semantic LLM Quality Evaluator via Gateway]
     
     D --> D1[Commentary Depth & Insight]
@@ -56,7 +58,7 @@ graph TD
     D --> D3[Authentic Mandarin Voice]
     
     D1 & D2 & D3 --> E[Composite Anti-Slop Scorecard & Token Profile]
-    E --> G{Score >= 80/100 & No Fails?}
+    E --> G{Score >= 80/100 & No Critical Fails?}
     G -- Yes --> H[Approved for Render/Publish]
     G -- No --> I[Escalate / Trigger Targeted Regeneration]
 ```
@@ -69,18 +71,29 @@ The overall **Anti-Slop Quality Score (0–100)** is computed across 10 calibrat
 
 $$\text{Total Score} = \sum_{i=1}^{10} w_i \cdot S_i$$
 
-| Metric Dimension ($S_i$) | Weight ($w_i$) | Evaluation Method | Target / Passing Threshold |
-| :--- | :---: | :---: | :--- |
-| **1. Movie Identity & Anti-Contamination** | **8%** | Deterministic (0 tokens) | Title isolation; foreign movie marker detection. |
-| **2. Cleanliness & Formatting** | **5%** | Deterministic (0 tokens) | 100 points: 0 JSON keys, 0 code fences, 0 TTS punctuation leaks. Hard fail on leak. |
-| **3. Lexical Diversity & Cliché Avoidance** | **8%** | Deterministic (0 tokens) | $\text{TTR} \ge 0.45$, $\text{Distinct-2} \ge 0.85$, 0 blacklist clichés. |
-| **4. Evidence & Temporal Alignment** | **7%** | Deterministic (0 tokens) | $100\%$ body segments mapped to source timestamps. |
-| **5. Storyteller Narrative Continuity** | **12%** | Deterministic (0 tokens) | Monotonicity $\ge 90\%$, Transition coherence on scene jumps $\ge 80\%$, Entity threading, 0 backward timeline regressions. |
-| **6. Cross-Modal Audio-Visual Coupling** | **15%** | Deterministic + Index Matching (0 tokens) | Content-grounded scene matching $\ge 80\%$, drift $|\Delta t| \le 0.5\text{s}$, 0 duplicate loop cuts, phase adherence. |
-| **7. Pacing & Speaking Rate** | **5%** | Deterministic (0 tokens) | $220\text{--}280\text{ Chinese chars/min}$. |
-| **8. Commentary Depth & Insight** | **20%** | Semantic LLM Judge | Score $\ge 75/100$: Original analysis, character psychology, thematic deconstruction. |
-| **9. Authentic Mandarin Voice** | **10%** | Semantic LLM Judge | Natural Chinese video essayist tone, avoidance of robotic/literal translations. |
-| **10. Hook Engagement & Tension** | **10%** | Semantic LLM Judge | Score $\ge 75/100$: High-curiosity hook without spoilers, dramatic narrative pull. |
+### Strict Critical-Dimension Gating
+To prevent high composite scores from masking fatal flaws (such as severe AV hallucinations or script leaks), the following **5 Critical Dimensions** are strictly gated:
+1. **Movie Identity & Anti-Contamination**
+2. **Cleanliness & Formatting**
+3. **Evidence & Temporal Alignment**
+4. **Cross-Modal Audio-Visual Coupling**
+5. **Storyteller Narrative Continuity**
+
+If **any** critical dimension fails (`passed: False`), the project is automatically assigned **Tier F (Rejected)**, and approval is blocked, regardless of the numerical total score.
+
+### Rubric Table
+| Metric Dimension ($S_i$) | Weight ($w_i$) | Evaluation Method | Critical? | Target / Passing Threshold |
+| :--- | :---: | :---: | :---: | :--- |
+| **1. Movie Identity & Anti-Contamination** | **8%** | Deterministic (0 tokens) | **YES** | Title isolation; foreign movie marker detection. |
+| **2. Cleanliness & Formatting** | **5%** | Deterministic (0 tokens) | **YES** | 100 points: 0 JSON keys, 0 code fences, 0 TTS punctuation leaks. Hard fail on leak. |
+| **3. Lexical Diversity & Cliché Avoidance** | **8%** | Deterministic (0 tokens) | NO | $\text{TTR} \ge 0.45$, $\text{Distinct-2} \ge 0.85$, 0 blacklist clichés. |
+| **4. Evidence & Temporal Alignment** | **7%** | Deterministic (0 tokens) | **YES** | $100\%$ body segments mapped to source timestamps. |
+| **5. Storyteller Narrative Continuity** | **12%** | Deterministic (0 tokens) | **YES** | Monotonicity $\ge 90\%$, Transition coherence on scene jumps $\ge 80\%$, Entity threading, 0 backward timeline regressions. |
+| **6. Cross-Modal Audio-Visual Coupling** | **15%** | Deterministic + Index Matching (0 tokens) | **YES** | Content-grounded scene matching $\ge 80\%$, 0 activity-domain conflicts, drift $|\Delta t| \le 0.5\text{s}$, 0 duplicate loop cuts, phase adherence. |
+| **7. Pacing & Speaking Rate** | **5%** | Deterministic (0 tokens) | NO | $220\text{--}280\text{ Chinese chars/min}$. |
+| **8. Commentary Depth & Insight** | **20%** | Semantic LLM Judge | NO | Score $\ge 75/100$: Original analysis, character psychology, thematic deconstruction. |
+| **9. Authentic Mandarin Voice** | **10%** | Semantic LLM Judge | NO | Natural Chinese video essayist tone, avoidance of robotic/literal translations. |
+| **10. Hook Engagement & Tension** | **10%** | Semantic LLM Judge | NO | Score $\ge 75/100$: High-curiosity hook without spoilers, dramatic narrative pull. |
 
 ---
 

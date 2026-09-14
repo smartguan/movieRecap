@@ -29,6 +29,41 @@ from src.eval.models import (
 logger = logging.getLogger(__name__)
 
 
+# Generic Activity / Setting Incompatibility Rules across Movie Recap Domains
+ACTIVITY_DOMAINS: dict[str, dict[str, Any]] = {
+    "dining_cooking": {
+        "text_cues": ["做饭", "下厨", "烹饪", "晚餐", "晚饭", "午餐", "便当", "吃饭", "家常饭", "餐桌", "美食", "煮", "炒", "煎", "就餐", "享用午餐", "享用晚餐", "家常便饭"],
+        "scene_cues": ["食べる", "食べた", "料理", "ご飯", "めし", "できた", "いただきます", "サイコーン", "おいしい", "キッチン", "kitchen", "cook", "dining", "dinner", "lunch", "meal"],
+        "conflicts_with": ["salon_haircut"],
+    },
+    "salon_haircut": {
+        "text_cues": ["理发", "剪发", "修剪发丝", "发丝", "理发师", "发型", "洗头", "吹风", "发廊", "发店"],
+        "scene_cues": ["カット", "髪", "美容", "シャンプー", "パーマ", "イメチェン", "hair", "salon", "barber"],
+        "conflicts_with": ["dining_cooking", "combat_horror", "temple_ritual"],
+    },
+    "phone_digital": {
+        "text_cues": ["手机", "社交账号", "网络动态", "私密照片", "短信", "震动提示", "倒计时", "屏幕弹窗", "发帖", "推特", "照片"],
+        "scene_cues": ["投稿", "SNS", "写真", "スマホ", "携帯", "アカウント", "ネット", "カメラ", "phone", "post", "screen"],
+        "conflicts_with": [],
+    },
+    "travel_transit": {
+        "text_cues": ["机场", "飞机", "航班", "降落", "起飞", "航站楼", "跨海", "桃园", "骑楼", "巷道", "街头", "驱车", "车窗"],
+        "scene_cues": ["空港", "飛行機", "フライト", "台湾", "台北", "車", "道路", "airport", "flight", "plane", "travel", "driving"],
+        "conflicts_with": [],
+    },
+    "temple_ritual": {
+        "text_cues": ["神庙", "庙宇", "神龛", "香烛", "道铺", "符咒", "纸人", "母偶", "供桌", "封印", "阴煞"],
+        "scene_cues": ["廟", "寺", "神社", "神棚", "お札", "符", "母偶", "人形", "線香", "お参り", "temple", "shrine", "altar", "ritual"],
+        "conflicts_with": ["salon_haircut"],
+    },
+    "combat_horror": {
+        "text_cues": ["搏杀", "打斗", "厉鬼", "怨灵", "火海", "焚毁", "点燃", "打火机", "尖叫", "惨死", "自尽", "血泊", "凶煞", "大殿崩塌"],
+        "scene_cues": ["殺", "死", "火", "燃", "ライター", "幽霊", "怨霊", "怖い", "怪奇", "fight", "ghost", "flame", "corpse"],
+        "conflicts_with": ["salon_haircut"],
+    },
+}
+
+
 def check_av_semantic_alignment(
     segments: list[dict[str, Any]],
     edit_decisions: list[dict[str, Any]],
@@ -38,8 +73,8 @@ def check_av_semantic_alignment(
     story_understanding: Optional[dict[str, Any]] = None,
 ) -> tuple[float, int, list[str]]:
     """
-    Audit whether visual clip timestamps align with narration semantic phases
-    and scene content (ADR 0004 & ADR 0005).
+    Audit whether visual clip timestamps align with narration semantic phases,
+    activity domains, and scene content (ADR 0004, ADR 0005, ADR 0007).
 
     Returns:
         (alignment_score, mismatch_count, list of findings)
@@ -56,7 +91,6 @@ def check_av_semantic_alignment(
     findings: list[str] = []
     mismatches = 0
     total_checks = 0
-    title_clean = movie_title or ""
 
     semantic_idx = None
     if scene_index and scene_index.get("scenes"):
@@ -66,56 +100,9 @@ def check_av_semantic_alignment(
         text = dec.get("text", "")
         src_st = dec.get("source_start", 0.0)
 
-        # 1. Movie-specific semantic phase landmarks
-        if "诅咒" in title_clean or "Curse" in title_clean:
-            # Act 5: Dawn / Reflection (4800.0s+)
-            if any(k in text for k in ["晨光穿透", "走出密林", "重回东京", "注销沉寂", "回顾《诅咒》", "人性执念"]):
-                total_checks += 1
-                if not (4800.0 <= src_st <= total_source_duration + 5.0):
-                    mismatches += 1
-                    findings.append(
-                        f"AV Semantic Disconnect: Clip {i} ('{text[:24]}...') at {src_st:.1f}s is outside dawn resolution phase [4800s+]"
-                    )
-
-            # Act 4: Temple / Ghost fight / Mother doll (4300.0 - 5150.0s)
-            elif any(k in text for k in ["荒废神庙", "古老庙宇", "红衣怨灵", "母偶", "防风打火机", "殿门轰然紧闭", "深山密林", "神龛深处"]):
-                total_checks += 1
-                if not (4300.0 <= src_st <= 5150.0):
-                    mismatches += 1
-                    findings.append(
-                        f"AV Semantic Disconnect: Clip {i} ('{text[:24]}...') at {src_st:.1f}s is outside abandoned temple fight phase [4300-5150s]"
-                    )
-
-            # Act 3: Taiwan / Taipei / Incense shop / Bullying investigation (2800.0 - 4500.0s)
-            elif any(k in text for k in ["老旧街巷", "阴冷骑楼", "香烛道铺", "七日绝魂煞", "校园霸凌", "恶毒留言截图", "身披湿透红衣"]):
-                total_checks += 1
-                if not (2800.0 <= src_st <= 4500.0):
-                    mismatches += 1
-                    findings.append(
-                        f"AV Semantic Disconnect: Clip {i} ('{text[:24]}...') at {src_st:.1f}s is outside Taiwan investigation phase [2800-4500s]"
-                    )
-
-            # Act 2: Panic / Bathtub / Flight departure (750.0 - 3100.0s)
-            elif any(k in text for k in ["自家浴缸", "烧焦的纸人", "死于非命", "翻箱倒柜", "飞往台北的航班", "走出机场大厅"]):
-                total_checks += 1
-                if not (750.0 <= src_st <= 3100.0):
-                    mismatches += 1
-                    findings.append(
-                        f"AV Semantic Disconnect: Clip {i} ('{text[:24]}...') at {src_st:.1f}s is outside Act 2 departure phase [750-3100s]"
-                    )
-
-            # Act 1: Tokyo hair salon / work (0.0 - 1000.0s)
-            elif any(k in text for k in ["理发店", "修剪发丝", "收音机播放", "冲进休息室", "剪发", "镜子中反射出"]):
-                total_checks += 1
-                if not (0.0 <= src_st <= 1000.0):
-                    mismatches += 1
-                    findings.append(
-                        f"AV Semantic Disconnect: Clip {i} ('{text[:24]}...') at {src_st:.1f}s is outside Tokyo salon phase [0-1000s]"
-                    )
-
-        # 2. Direct Scene Content Semantic Audit (when scene_index available)
-        if semantic_idx and semantic_idx.scenes and text:
-            # Locate the scene at source_start
+        # Locate the scene at source_start
+        matching_sc = None
+        if semantic_idx and semantic_idx.scenes:
             matching_sc = next(
                 (s for s in semantic_idx.scenes if s.start_seconds <= src_st <= s.end_seconds),
                 None,
@@ -123,33 +110,83 @@ def check_av_semantic_alignment(
             if matching_sc is None:
                 matching_sc = min(semantic_idx.scenes, key=lambda s: abs(s.start_seconds - src_st))
 
-            # If the scene contains dialogue, verify it correlates with narration
-            has_domain_concept = any(c in text for c in CONCEPT_MAP)
-            if has_domain_concept and matching_sc.transcript_text.strip():
-                total_checks += 1
-                c_score = score_scene_for_narration(
-                    scene=matching_sc,
-                    narration_text=text,
-                    target_timestamp=src_st,
-                    total_duration=total_source_duration,
-                )
-                if c_score < 0.20:
+        scene_text = matching_sc.transcript_text if matching_sc else ""
+        scene_context_str = scene_text
+        if matching_sc and hasattr(matching_sc, "context_tokens") and matching_sc.context_tokens:
+            scene_context_str = " ".join(matching_sc.context_tokens) + " " + scene_text
+
+        # 1. Generic Cross-Modal Activity and Setting Conflict Audit
+        text_domains = {
+            dom for dom, spec in ACTIVITY_DOMAINS.items()
+            if any(cue in text for cue in spec["text_cues"])
+        }
+        scene_domains = {
+            dom for dom, spec in ACTIVITY_DOMAINS.items()
+            if any(cue in scene_context_str for cue in spec["scene_cues"])
+        }
+
+        for t_dom in text_domains:
+            conflicting_doms = ACTIVITY_DOMAINS[t_dom]["conflicts_with"]
+            for s_dom in scene_domains:
+                if s_dom in conflicting_doms and t_dom not in scene_domains:
+                    total_checks += 1
+                    mismatches += 1
+                    findings.append(
+                        f"AV Activity Conflict: Clip {i} ('{text[:24]}...') asserts '{t_dom}' activity, "
+                        f"but video footage at {src_st:.1f}s contains '{s_dom}' dialogue/actions"
+                    )
+
+        # 2. Direct Scene Content Semantic Audit (when scene dialogue is present)
+        if matching_sc and scene_text.strip():
+            total_checks += 1
+            c_score = score_scene_for_narration(
+                scene=matching_sc,
+                narration_text=text,
+                target_timestamp=src_st,
+                total_duration=total_source_duration,
+            )
+            if len(scene_text) >= 12 and c_score < 0.15:
+                if not any(f"Clip {i}" in f for f in findings):
                     mismatches += 1
                     findings.append(
                         f"AV Scene Content Mismatch: Clip {i} ('{text[:24]}...') at {src_st:.1f}s has near-zero semantic correlation ({c_score:.2f}) with dialogue in scene {matching_sc.scene_id}"
                     )
 
-        # 3. General cross-act chronological phase check for any movie
-        if i == 0 and total_source_duration > 180.0:
-            total_checks += 1
-            if src_st > total_source_duration * 0.25:
+        # 3. Macro Chronological Phase Audit across movie runtime
+        if total_source_duration > 300.0:
+            rel_pos = src_st / total_source_duration
+            # A: Opening exposition scene placed at the end of movie
+            if ("salon_haircut" in text_domains or any(k in text for k in ["故事从", "拉开帷幕", "起初", "修剪发丝"])) and rel_pos >= 0.70:
+                total_checks += 1
+                mismatches += 1
+                findings.append(
+                    f"AV Chronological Disconnect: Early exposition ('{text[:24]}...') placed at {src_st:.1f}s (>{total_source_duration * 0.70:.1f}s, {rel_pos*100:.1f}% into runtime)"
+                )
+            # B: Final climax / resolution placed in first 25% of movie
+            elif ("combat_horror" in text_domains or any(k in text for k in ["决战", "怨灵决战", "防风打火机", "点燃母偶", "母偶化为灰烬", "晨光穿透"])) and rel_pos <= 0.25:
+                total_checks += 1
+                mismatches += 1
+                findings.append(
+                    f"AV Chronological Disconnect: Climax resolution ('{text[:24]}...') placed at {src_st:.1f}s (<{total_source_duration * 0.25:.1f}s, {rel_pos*100:.1f}% into runtime)"
+                )
+            # C: Distant overseas travel placed in initial 5% of movie
+            elif any(k in text for k in ["跨海抵达", "降落在台北", "老旧街巷香烛道铺"]) and rel_pos <= 0.05:
+                total_checks += 1
+                mismatches += 1
+                findings.append(
+                    f"AV Chronological Disconnect: Overseas investigation ('{text[:24]}...') placed at {src_st:.1f}s (<{total_source_duration * 0.05:.1f}s, {rel_pos*100:.1f}% into runtime)"
+                )
+
+        # 4. First and last clip phase sanity (when full recap >= 3 clips)
+        if len(edit_decisions) >= 3:
+            if i == 0 and total_source_duration > 180.0 and src_st > total_source_duration * 0.25:
+                total_checks += 1
                 mismatches += 1
                 findings.append(
                     f"AV Hook Disconnect: Hook clip at {src_st:.1f}s is outside introductory phase (>{total_source_duration * 0.25:.1f}s)"
                 )
-        elif i == len(edit_decisions) - 1 and total_source_duration > 180.0:
-            total_checks += 1
-            if src_st < total_source_duration * 0.70:
+            elif i == len(edit_decisions) - 1 and total_source_duration > 180.0 and src_st < total_source_duration * 0.70:
+                total_checks += 1
                 mismatches += 1
                 findings.append(
                     f"AV Conclusion Disconnect: Conclusion clip at {src_st:.1f}s is outside resolution phase (<{total_source_duration * 0.70:.1f}s)"
@@ -629,26 +666,34 @@ def evaluate_deterministic(
 
         if content_scores:
             avg_content_score = sum(content_scores) / len(content_scores)
-            scene_content_match_score = round(min(100.0, (avg_content_score / 0.40) * 100.0), 1)
+            scene_content_match_score = round(min(100.0, (avg_content_score / 0.50) * 100.0), 1)
 
+    has_any_scene_char_tags = any(s.get("characters") for s in scenes)
     for seg in segments:
         text = seg.get("text", "")
         supporting = seg.get("supporting_scenes", [])
         # Check if characters mentioned in text appear in supporting scenes
         for char in known_characters:
             if char in text:
-                total_character_checks += 1
                 if supporting and scenes:
                     start_s = supporting[0].get("start_seconds", 0.0)
                     end_s = supporting[0].get("end_seconds", start_s)
-                    # Find scene in index
-                    in_scene = any(
+                    matching_scenes = [
                         s for s in scenes
                         if s.get("start_seconds", 0) <= end_s and s.get("end_seconds", 0) >= start_s
-                        and char.lower() in [c.lower() for c in s.get("characters", [])]
-                    )
-                    if in_scene or len(scenes) > 0:
-                        matched_characters += 1
+                    ]
+                    if matching_scenes:
+                        total_character_checks += 1
+                        in_char_tags = any(
+                            char.lower() in [c.lower() for c in s.get("characters", [])]
+                            for s in matching_scenes
+                        )
+                        in_transcript = any(
+                            char.lower() in s.get("transcript_text", "").lower()
+                            for s in matching_scenes
+                        )
+                        if in_char_tags or in_transcript or not has_any_scene_char_tags:
+                            matched_characters += 1
 
     char_alignment_ratio = (matched_characters / total_character_checks) if total_character_checks > 0 else 1.0
     dynamic_pacing_pass = max_shot_duration <= 35.0  # Max shot duration for commentary recaps
@@ -666,11 +711,10 @@ def evaluate_deterministic(
     if timeline_coverage_ratio < 0.35 and tot_src_dur > 180.0:
         coupling_score -= (0.35 - timeline_coverage_ratio) * 40.0
     if phase_mismatches > 0:
-        coupling_score -= min(40.0, phase_mismatches * 15.0)
-        if phase_mismatches >= 3:
-            hard_failures.append(f"Severe AV semantic misalignment: {phase_mismatches} narrative segments paired with wrong movie phase video footage")
-    if scene_content_match_score < 50.0:
-        coupling_score -= min(25.0, (50.0 - scene_content_match_score) * 0.5)
+        coupling_score -= min(60.0, phase_mismatches * 25.0)
+        hard_failures.append(f"Severe AV semantic misalignment: {phase_mismatches} narrative segments contradict video footage dialogue and activity")
+    if scene_content_match_score < 40.0:
+        coupling_score -= min(25.0, (40.0 - scene_content_match_score) * 0.5)
 
     coupling_score = max(0.0, round(coupling_score, 1))
 

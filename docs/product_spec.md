@@ -1,10 +1,10 @@
 # Movie Commentary Autopilot
 
 **Product Requirements Document (PRD)**  
-**Version:** 0.5  
+**Version:** 0.6  
 **Date:** September 14, 2026  
 **Status:** Active  
-**ADR References:** [ADR 0004: Audio-Visual Semantic Alignment](docs/adr/0004_audio_visual_semantic_alignment.md) (Superseded), [ADR 0005: Content-Grounded Scene Selection](docs/adr/0005_content_grounded_scene_selection.md), [ADR 0006: V3 Video-First Narrative Spine Engine](docs/adr/0006_v3_video_first_narrative_spine.md)  
+**ADR References:** [ADR 0004: Audio-Visual Semantic Alignment](docs/adr/0004_audio_visual_semantic_alignment.md) (Superseded), [ADR 0005: Content-Grounded Scene Selection](docs/adr/0005_content_grounded_scene_selection.md), [ADR 0006: V3 Video-First Narrative Spine Engine](docs/adr/0006_v3_video_first_narrative_spine.md), [ADR 0007: Generic Audio-Visual Semantic Grounding](docs/adr/0007_grounded_av_semantic_fidelity.md)  
 
 ## 1. Executive summary
 

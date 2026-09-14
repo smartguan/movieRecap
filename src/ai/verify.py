@@ -547,13 +547,30 @@ def _semantic_verification(
     gateway = LLMGateway(config)
     register_all_tasks(gateway)
 
+    scenes = scene_index.get("scenes", []) if scene_index else []
     segments = script.get("segments", [])
-    script_text = "\n\n".join(
-        f"[{s.get('segment_id', '?')}] ({s.get('segment_type', '?')}) {s.get('text', '')}"
-        for s in segments
-    )
+    script_segments_with_evidence = []
+    for s in segments:
+        seg_id = s.get("segment_id", "?")
+        seg_type = s.get("segment_type", "?")
+        text = s.get("text", "")
+        supporting = s.get("supporting_scenes", [])
+        scene_dialogue = ""
+        if supporting and scenes:
+            st = supporting[0].get("start_seconds", 0.0)
+            et = supporting[0].get("end_seconds", st)
+            matched_subs = [
+                sc.get("transcript_text", "")
+                for sc in scenes
+                if sc.get("start_seconds", 0) <= et and sc.get("end_seconds", 0) >= st and sc.get("transcript_text")
+            ]
+            if matched_subs:
+                scene_dialogue = f"\n  [SCENE FOOTAGE DIALOGUE: {' '.join(matched_subs)[:120]}]"
+        script_segments_with_evidence.append(f"[{seg_id}] ({seg_type}) {text}{scene_dialogue}")
 
-    # Build compact context — just characters and key events
+    script_text = "\n\n".join(script_segments_with_evidence)
+
+    # Build compact context — characters and key events
     characters = json.dumps(
         story.get("characters", [])[:10], ensure_ascii=False
     )
@@ -565,15 +582,15 @@ def _semantic_verification(
     # Factual verification
     context = f"""CHARACTERS:\n{characters}\n\nKEY EVENTS:\n{events_summary}"""
 
-    prompt = f"""You are an independent script evaluator. Review this movie commentary script for factual accuracy.
+    prompt = f"""You are an independent script evaluator. Review this movie commentary script for factual accuracy and audio-visual fidelity.
 
 Check for:
-1. Claims about characters or events not supported by the story evidence
-2. Incorrect character names or relationships
-3. Wrong event ordering or causation
+1. Audio-Visual Semantic Hallucinations: Narration claiming activities or settings contradicted by the scene footage dialogue (e.g. claiming salon lunch break when scene footage dialogue shows cooking dinner at home)
+2. Claims about characters or events not supported by the story evidence
+3. Incorrect character names or relationships
 4. Hallucinated plot details
 
-SCRIPT:
+SCRIPT & SCENE EVIDENCE:
 {script_text[:6000]}
 
 Respond in JSON:
