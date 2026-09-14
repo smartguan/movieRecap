@@ -128,27 +128,34 @@ def plan_and_extract_clips(
             if 0.0 <= prop_st <= total_source_duration and not is_dup and not is_severe_loop and not is_repeated_proposal:
                 expected_phase = (prop_st - 40.0, prop_et + 40.0)
 
-        # Query semantic scene matcher for best content-matched candidate
-        candidates = find_best_scenes(
-            semantic_index=semantic_index,
-            narration_text=text,
-            target_timestamp=target_timestamp,
-            needed_duration=needed_duration,
-            used_start_timestamps=used_start_timestamps,
-            expected_phase=expected_phase,
-            last_source_start=last_source_start,
-            min_spacing=8.0,
-            top_k=1,
-        )
-
+        is_v3 = bool(script and script.get("version") == "v3")
         matched_scene_id = ""
-        best_score = 0.0
-        if candidates:
-            best_scene, best_score = candidates[0]
-            chosen_start = best_scene.start_seconds
-            matched_scene_id = best_scene.scene_id
+        best_score = 1.0
+
+        if is_v3 and supporting and isinstance(supporting, list) and isinstance(supporting[0], dict):
+            chosen_start = float(supporting[0].get("start_seconds", 0.0))
+            matched_scene_id = asset.get("sequence_id", f"v3-seq-{i:03d}")
         else:
-            chosen_start = target_timestamp
+            # Query semantic scene matcher for best content-matched candidate (V2)
+            candidates = find_best_scenes(
+                semantic_index=semantic_index,
+                narration_text=text,
+                target_timestamp=target_timestamp,
+                needed_duration=needed_duration,
+                used_start_timestamps=used_start_timestamps,
+                expected_phase=expected_phase,
+                last_source_start=last_source_start,
+                min_spacing=8.0,
+                top_k=1,
+            )
+
+            if candidates:
+                best_scene, best_score = candidates[0]
+                chosen_start = best_scene.start_seconds
+                matched_scene_id = best_scene.scene_id
+            else:
+                chosen_start = target_timestamp
+                best_score = 0.0
 
         # Final clamping to ensure valid video boundaries
         src_start = max(0.0, min(chosen_start, max(0.0, total_source_duration - needed_duration)))

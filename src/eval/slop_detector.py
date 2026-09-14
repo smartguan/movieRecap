@@ -125,7 +125,7 @@ class SlopDetector:
                 slop_indicators_detected=["Deterministic hard failure present"],
             )
             sem_dims = [
-                DimensionScore(name="Commentary Depth & Insight", score=0.0, weight=0.25, passed=False, details="Skipped due to hard failure"),
+                DimensionScore(name="Commentary Depth & Insight", score=0.0, weight=0.20, passed=False, details="Skipped due to hard failure"),
                 DimensionScore(name="Authentic Mandarin Voice", score=0.0, weight=0.10, passed=False, details="Skipped due to hard failure"),
                 DimensionScore(name="Hook Engagement & Tension", score=0.0, weight=0.10, passed=False, details="Skipped due to hard failure"),
             ]
@@ -185,7 +185,7 @@ class SlopDetector:
             total_eval_tokens=total_tokens,
             total_eval_cost_usd=round(total_cost, 6),
             deterministic_savings_description=(
-                f"6 deterministic evaluators (Movie Identity, Cleanliness, Diversity, Evidence, AV Coupling, Pacing) executed at 0 tokens ($0.00)"
+                f"7 deterministic evaluators (Movie Identity, Cleanliness, Diversity, Evidence, Continuity, AV Coupling, Pacing) executed at 0 tokens ($0.00)"
             ),
             timestamp=datetime.datetime.now(datetime.timezone.utc).isoformat(),
         )
@@ -215,6 +215,14 @@ class SlopDetector:
             md.append(f"| **{dim.name}** | {dim.weight * 100:.0f}% | {dim.score:.1f} | {dim_status} | {dim.details} |")
 
         md.extend([
+            f"",
+            f"## 📖 Storyteller Narrative Continuity Telemetry",
+            f"- **Continuity Composite Score**: `{report.deterministic.continuity.continuity_score:.1f} / 100.0`",
+            f"- **Temporal Monotonicity**: `{report.deterministic.continuity.temporal_monotonicity_score:.1f}%` (Backward jumps: `{report.deterministic.continuity.backward_jump_count}`)",
+            f"- **Discourse Transition Coherence**: `{report.deterministic.continuity.transition_coherence_ratio * 100:.1f}%` (Unbridged scene jumps: `{report.deterministic.continuity.unbridged_jump_count} / {report.deterministic.continuity.scene_jump_count}`)",
+            f"- **Character / Entity Threading**: `{report.deterministic.continuity.character_entity_thread_ratio * 100:.1f}%`",
+            f"- **Visual Spine Contiguity**: `{report.deterministic.continuity.visual_spine_contiguity_score:.1f}%`",
+            f"- **Continuity Status**: {report.deterministic.continuity.details}",
             f"",
             f"## 🎞 Cross-Modal Audio-Visual Coupling Telemetry",
             f"- **Audio-Video Duration Drift**: `{report.deterministic.av_coupling.av_duration_drift_seconds:.3f}s`",

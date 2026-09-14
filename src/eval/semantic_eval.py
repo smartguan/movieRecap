@@ -108,7 +108,7 @@ SCRIPT TO EVALUATE:
     depth_dim = DimensionScore(
         name="Commentary Depth & Insight",
         score=depth_score,
-        weight=0.25,
+        weight=0.20,
         passed=depth_score >= 75.0,
         details="Original thematic analysis and character insight" if depth_score >= 75.0 else "Too passive / plot-heavy",
         findings=parsed.get("slop_indicators_detected", []),

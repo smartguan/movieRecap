@@ -112,6 +112,7 @@ def run_stage_generate(
     duration_ratio: float = 0.20,
     config: Optional[Dict[str, Any]] = None,
     force: bool = False,
+    algo_version: str = "v3",
 ) -> Stage3Result:
     """
     Execute Stage 3: Generate script, voiceover, video assembly, QA, and platform export.
@@ -124,6 +125,7 @@ def run_stage_generate(
         duration_ratio: Proportional duration ratio (default: 0.20 = 1/5).
         config: System configuration dict.
         force: If True, re-generate even if output exists.
+        algo_version: "v3" for video-first narrative spine, "v2" for script-first (A/B testing).
 
     Returns:
         Stage3Result with platform package paths.
@@ -160,7 +162,8 @@ def run_stage_generate(
     ]
 
     logger.info(
-        "Running Stage 3 Recap Generation for '%s': Target ~%.2f min (Range: %.2f - %.2f min)",
+        "Running Stage 3 (%s) Recap Generation for '%s': Target ~%.2f min (Range: %.2f - %.2f min)",
+        algo_version.upper(),
         movie_title,
         target_recap_min,
         duration_range[0],
@@ -173,18 +176,64 @@ def run_stage_generate(
     # 2. Write Narration Script (SEMANTIC)
     script_file = stage_work_dir / "script.json"
     if not script_file.exists() or force:
-        logger.info("Generating proportional script (%s chars target)...", int(target_recap_min * 250))
         proj_data = {
             "title": movie_title,
             "project_id": slug,
             "target_duration_range": duration_range,
         }
-        script_dict = generate_script(
-            project=proj_data,
-            story=story_dict,
-            scene_index=scene_index_dict,
-            config=config or {},
-        )
+        if algo_version.lower() == "v2":
+            logger.info("Generating V2 script-first recap (%s chars target)...", int(target_recap_min * 250))
+            script_dict = generate_script(
+                project=proj_data,
+                story=story_dict,
+                scene_index=scene_index_dict,
+                config=config or {},
+            )
+        else:
+            # V3 Video-First Narrative Spine Engine
+            logger.info("Generating V3 video-first narrative-spine recap (target %.2f min)...", target_recap_min)
+            from src.ai.story_filter import filter_main_story_sequences
+            from src.ai.video_grounded_script import VideoGroundedScriptSynthesizer
+            from src.media.sequence_clusterer import cluster_scenes_into_sequences
+
+            subtitles_file = stage2_dir / "subtitles.json"
+            subtitles = (
+                json.loads(subtitles_file.read_text(encoding="utf-8"))
+                if subtitles_file.exists()
+                else []
+            )
+
+            all_sequences = cluster_scenes_into_sequences(
+                scenes=scene_index_dict.get("scenes", []),
+                subtitles=subtitles,
+            )
+
+            target_budget_sec = target_recap_min * 60.0
+            selected_sequences = filter_main_story_sequences(
+                sequences=all_sequences,
+                story_understanding=story_dict,
+                target_duration_sec=target_budget_sec,
+                config=config,
+            )
+
+            synthesizer = VideoGroundedScriptSynthesizer(config=config)
+            script_segments = synthesizer.synthesize_script(
+                title=movie_title,
+                synopsis=story_dict.get("synopsis", ""),
+                cast=[c.get("name", "") for c in story_dict.get("characters", []) if isinstance(c, dict)],
+                genre=story_dict.get("genre", "惊悚"),
+                selected_sequences=selected_sequences,
+                gateway=gateway,
+            )
+
+            script_dict = {
+                "title": movie_title,
+                "project_id": slug,
+                "version": "v3",
+                "segments": script_segments,
+                "target_speaking_rate": 240.0,
+            }
+
         script_file.write_text(
             json.dumps(script_dict, indent=2, ensure_ascii=False), encoding="utf-8"
         )

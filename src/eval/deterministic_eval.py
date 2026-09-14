@@ -23,6 +23,7 @@ from src.eval.models import (
     DeterministicMetrics,
     DimensionScore,
     EvaluatorTelemetry,
+    StoryContinuityMetrics,
 )
 
 logger = logging.getLogger(__name__)
@@ -162,6 +163,227 @@ def check_av_semantic_alignment(
     return score, mismatches, findings
 
 
+TRANSITION_MARKERS: list[str] = [
+    # Temporal & sequence progression
+    "随后", "与此同时", "转眼间", "不久后", "几天后", "第二天", "次日", "几天过去",
+    "数日后", "几年后", "多年后", "紧接着", "未等", "正在这时", "就在此时", "随着",
+    "当夜", "午夜", "翌日", "数月后", "后来", "在此期间", "夜幕降临", "画面一转",
+    "此时", "另一边", "几经周折", "顺着线索", "时间一晃", "随着时间",
+    # Causal & motivational transitions
+    "为了", "在得知", "在发现", "在经历", "见此情形", "于是", "因而", "为此", "决定",
+    "为了弄清", "为了查明", "为了斩断", "为了救", "为了找到", "在惨烈", "在噩梦",
+    # Spatial & journey movements
+    "来到", "赶往", "孤身前往", "驱车", "跨海", "深入", "穿行于", "回到", "进入", "踏入",
+    "走出", "启程", "奔赴", "飞往", "前往",
+    # Dramatic phase and narrative bridges
+    "随着调查深入", "惨烈搏杀过后", "未等众人喘息", "尘埃落定", "生死一线之际",
+    "随着真相浮出水面", "在真相大白之后", "回顾",
+]
+
+
+def calculate_storyteller_continuity(
+    segments: list[dict[str, Any]],
+    story: dict[str, Any] | None = None,
+    edit_decisions: list[dict[str, Any]] | None = None,
+    total_source_duration: float = 300.0,
+) -> tuple[StoryContinuityMetrics, DimensionScore]:
+    """
+    Deterministically analyze the narrative and temporal continuity of the storyteller.
+
+    Evaluates:
+    1. Temporal monotonicity (absence of confusing backward timeline regressions)
+    2. Discourse transition coherence on temporal/spatial jumps (gap >= 45s)
+    3. Character and narrative entity continuity across adjacent beats
+    4. Visual narrative spine contiguity (macro-scene stability vs. micro-fragmentation)
+
+    Returns:
+        (StoryContinuityMetrics, DimensionScore)
+    """
+    if not segments:
+        m = StoryContinuityMetrics()
+        d = DimensionScore(
+            name="Storyteller Narrative Continuity",
+            score=100.0,
+            weight=0.12,
+            passed=True,
+            details="No segments to evaluate",
+        )
+        return m, d
+
+    discontinuity_events: list[str] = []
+
+    # 1. Resolve timestamp bounds for each segment
+    timed_segments: list[tuple[int, dict[str, Any], float, float]] = []
+    for i, seg in enumerate(segments):
+        st = None
+        et = None
+        supporting = seg.get("supporting_scenes", [])
+        if supporting and isinstance(supporting, list):
+            st = float(supporting[0].get("start_seconds", 0.0))
+            et = float(supporting[0].get("end_seconds", st))
+        elif edit_decisions:
+            seg_id = seg.get("segment_id", "")
+            dec = next((d for d in edit_decisions if d.get("segment_id") == seg_id), None)
+            if dec is None and i < len(edit_decisions):
+                dec = edit_decisions[i]
+            if dec:
+                st = float(dec.get("source_start", 0.0))
+                et = float(dec.get("source_end", st))
+
+        if st is not None and et is not None:
+            timed_segments.append((i, seg, st, et))
+
+    # 2. Evaluate Temporal Monotonicity & Backward Jump Detection
+    temporal_score = 100.0
+    backward_jumps = 0
+    for idx in range(1, len(timed_segments)):
+        prev_i, _, prev_st, _ = timed_segments[idx - 1]
+        curr_i, _, curr_st, _ = timed_segments[idx]
+
+        delta = curr_st - prev_st
+        if delta < -2.0:
+            backward_gap = abs(delta)
+            if backward_gap > 15.0:
+                backward_jumps += 1
+                temporal_score -= 25.0
+                discontinuity_events.append(
+                    f"Major backward timeline regression: Segment {curr_i} ({curr_st:.1f}s) jumps backward by {backward_gap:.1f}s behind Segment {prev_i} ({prev_st:.1f}s)"
+                )
+            else:
+                temporal_score -= 5.0
+
+    temporal_monotonicity_score = max(0.0, min(100.0, round(temporal_score, 1)))
+
+    # 3. Evaluate Transition Coherence on Scene Jumps (gap >= 45s)
+    scene_jumps = 0
+    unbridged_jumps = 0
+    for idx in range(1, len(timed_segments)):
+        prev_i, _, _, prev_et = timed_segments[idx - 1]
+        curr_i, curr_seg, curr_st, _ = timed_segments[idx]
+
+        forward_gap = curr_st - prev_et
+        if forward_gap >= 45.0:
+            scene_jumps += 1
+            curr_text = curr_seg.get("text", "")
+            has_transition = (
+                any(marker in curr_text[:50] for marker in TRANSITION_MARKERS)
+                or any(marker in curr_text for marker in ["随着", "为了", "来到", "赶往", "跨海", "深入", "随后", "与此同时", "决定", "后来", "回顾"])
+            )
+            if not has_transition:
+                unbridged_jumps += 1
+                discontinuity_events.append(
+                    f"Unbridged narrative jump: Segment {curr_i} leaps forward by {forward_gap:.1f}s without connective transition phrasing"
+                )
+
+    if scene_jumps == 0:
+        transition_coherence_ratio = 1.0
+    else:
+        transition_coherence_ratio = round(max(0.0, (scene_jumps - unbridged_jumps) / scene_jumps), 3)
+
+    # 4. Character & Entity Narrative Threading
+    known_chars: list[str] = []
+    if story and isinstance(story, dict):
+        raw_chars = story.get("characters", [])
+        if isinstance(raw_chars, list):
+            for c in raw_chars:
+                if isinstance(c, dict) and c.get("name"):
+                    known_chars.append(c.get("name"))
+                elif isinstance(c, str) and c:
+                    known_chars.append(c)
+
+    unthreaded_pairs = 0
+    total_pairs = max(0, len(segments) - 1)
+    if total_pairs > 0 and known_chars:
+        for idx in range(1, len(segments)):
+            prev_text = segments[idx - 1].get("text", "")
+            curr_text = segments[idx].get("text", "")
+
+            prev_has = [c for c in known_chars if c in prev_text]
+            curr_has = [c for c in known_chars if c in curr_text]
+
+            # If both mention characters but have zero overlap and no scene shift transition
+            if prev_has and curr_has and not (set(prev_has) & set(curr_has)):
+                has_shift_marker = any(m in curr_text[:40] for m in ["另一边", "与此同时", "此时", "来到", "随着", "而"])
+                if not has_shift_marker:
+                    unthreaded_pairs += 1
+                    discontinuity_events.append(
+                        f"Entity focus shift: Segment {idx} switches from {prev_has} to {curr_has} without transition bridge"
+                    )
+
+        character_entity_thread_ratio = round(max(0.0, (total_pairs - unthreaded_pairs) / total_pairs), 3)
+    else:
+        character_entity_thread_ratio = 1.0
+
+    # 5. Visual Narrative Spine Contiguity
+    durations: list[float] = []
+    if edit_decisions:
+        for d in edit_decisions:
+            dur = float(d.get("duration", 0.0))
+            if dur <= 0.0:
+                dur = float(d.get("source_end", 0.0)) - float(d.get("source_start", 0.0))
+            if dur > 0.0:
+                durations.append(dur)
+    elif timed_segments:
+        durations = [et - st for _, _, st, et in timed_segments if et > st]
+
+    if durations:
+        avg_dur = sum(durations) / len(durations)
+        spine_score = min(100.0, max(40.0, (avg_dur / 25.0) * 100.0))
+        short_clips = sum(1 for d in durations if d < 4.0)
+        if len(durations) > 0 and (short_clips / len(durations)) > 0.20:
+            jitter_penalty = ((short_clips / len(durations)) - 0.20) * 50.0
+            spine_score -= jitter_penalty
+            discontinuity_events.append(
+                f"Visual spine jitter: {short_clips}/{len(durations)} clips are ultra-short (<4s)"
+            )
+        visual_spine_contiguity_score = max(0.0, min(100.0, round(spine_score, 1)))
+    else:
+        visual_spine_contiguity_score = 100.0
+
+    # 6. Composite Narrative Continuity Score
+    continuity_score = round(
+        0.35 * temporal_monotonicity_score
+        + 0.35 * (transition_coherence_ratio * 100.0)
+        + 0.15 * (character_entity_thread_ratio * 100.0)
+        + 0.15 * visual_spine_contiguity_score,
+        1,
+    )
+
+    passed = (continuity_score >= 70.0) and (backward_jumps == 0)
+
+    details = (
+        f"Continuity Score={continuity_score:.1f}/100 "
+        f"(Monotonicity={temporal_monotonicity_score:.1f}%, "
+        f"Transitions={transition_coherence_ratio * 100:.1f}%, "
+        f"Entity Threading={character_entity_thread_ratio * 100:.1f}%, "
+        f"Spine Contiguity={visual_spine_contiguity_score:.1f}%)"
+    )
+
+    metrics = StoryContinuityMetrics(
+        temporal_monotonicity_score=temporal_monotonicity_score,
+        transition_coherence_ratio=transition_coherence_ratio,
+        character_entity_thread_ratio=character_entity_thread_ratio,
+        visual_spine_contiguity_score=visual_spine_contiguity_score,
+        continuity_score=continuity_score,
+        scene_jump_count=scene_jumps,
+        unbridged_jump_count=unbridged_jumps,
+        backward_jump_count=backward_jumps,
+        discontinuity_events=discontinuity_events,
+        details=details,
+    )
+
+    dim = DimensionScore(
+        name="Storyteller Narrative Continuity",
+        score=continuity_score,
+        weight=0.12,
+        passed=passed,
+        details=details,
+        findings=discontinuity_events,
+    )
+
+    return metrics, dim
+
+
 def evaluate_deterministic(
     script: dict[str, Any],
     story: dict[str, Any] | None = None,
@@ -228,7 +450,7 @@ def evaluate_deterministic(
     movie_id_dim = DimensionScore(
         name="Movie Identity & Anti-Contamination",
         score=movie_id_score,
-        weight=0.10,
+        weight=0.08,
         passed=movie_identity_pass,
         details=f"Movie identity isolated for '{target_title or 'target'}'"
         if movie_identity_pass
@@ -283,13 +505,13 @@ def evaluate_deterministic(
     diversity_dim = DimensionScore(
         name="Lexical Diversity & Cliché Avoidance",
         score=diversity_score,
-        weight=0.10,
+        weight=0.08,
         passed=diversity_score >= 70.0,
         details=f"TTR={lex_metrics['ttr']:.2f}, Distinct-2={lex_metrics['distinct_2']:.2f}, Clichés={len(cliche_matches)}",
         findings=diversity_findings,
     )
 
-    # 3. Evidence Grounding & Temporal Sequence (10% weight)
+    # 3. Evidence Grounding & Temporal Sequence (7% weight)
     scenes = scene_index.get("scenes", []) if scene_index else []
     grounded_count = 0
     non_hook_count = 0
@@ -328,7 +550,7 @@ def evaluate_deterministic(
     evidence_dim = DimensionScore(
         name="Evidence & Temporal Alignment",
         score=evidence_score,
-        weight=0.10,
+        weight=0.07,
         passed=evidence_score >= 75.0,
         details=f"Evidence Grounding={grounded_ratio * 100:.1f}%, Chronological={chronological_pass}",
         findings=evidence_findings,
@@ -487,7 +709,19 @@ def evaluate_deterministic(
         findings=coupling_findings,
     )
 
-    # 5. Speaking Rate and Pacing (5% weight)
+    # 5. Storyteller Narrative Continuity (12% weight)
+    continuity_metrics, continuity_dim = calculate_storyteller_continuity(
+        segments=segments,
+        story=story,
+        edit_decisions=edit_decisions,
+        total_source_duration=tot_src_dur,
+    )
+    if continuity_metrics.backward_jump_count >= 2:
+        hard_failures.append(
+            f"Severe narrative discontinuity: {continuity_metrics.backward_jump_count} backward timeline regressions detected in storyteller sequence"
+        )
+
+    # 6. Speaking Rate and Pacing (5% weight)
     speaking_rate = 250.0
     if timeline_audio_duration and timeline_audio_duration > 0:
         speaking_rate = round((total_chars / timeline_audio_duration) * 60.0, 1)
@@ -524,6 +758,7 @@ def evaluate_deterministic(
         chronological_order_pass=chronological_pass,
         hard_failures=hard_failures,
         av_coupling=av_coupling_metrics,
+        continuity=continuity_metrics,
     )
 
     telemetry = EvaluatorTelemetry(
@@ -536,4 +771,4 @@ def evaluate_deterministic(
         cache_hit=False,
     )
 
-    return metrics, [movie_id_dim, clean_dim, diversity_dim, evidence_dim, av_coupling_dim, pacing_dim], telemetry
+    return metrics, [movie_id_dim, clean_dim, diversity_dim, evidence_dim, continuity_dim, av_coupling_dim, pacing_dim], telemetry

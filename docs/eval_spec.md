@@ -65,19 +65,22 @@ graph TD
 
 ## 4. Evaluation Rubric & Scoring Model
 
-The overall **Anti-Slop Quality Score (0–100)** is computed across 7 calibrated dimensions (weights sum to 1.00):
+The overall **Anti-Slop Quality Score (0–100)** is computed across 10 calibrated dimensions (weights sum to 1.00, with 60% executed deterministically at 0 tokens):
 
-$$\text{Total Score} = \sum_{i=1}^{7} w_i \cdot S_i$$
+$$\text{Total Score} = \sum_{i=1}^{10} w_i \cdot S_i$$
 
 | Metric Dimension ($S_i$) | Weight ($w_i$) | Evaluation Method | Target / Passing Threshold |
 | :--- | :---: | :---: | :--- |
-| **1. Cleanliness & Formatting** | **10%** | Deterministic (0 tokens) | 100 points: 0 JSON keys, 0 code fences, 0 TTS punctuation leaks. Any leak is a Hard Fail. |
-| **2. Lexical Diversity & Cliché Avoidance** | **15%** | Deterministic (0 tokens) | $\text{TTR} \ge 0.45$, $\text{Distinct-2} \ge 0.85$, 0 blacklist clichés. |
-| **3. Evidence & Temporal Alignment** | **10%** | Deterministic (0 tokens) | $100\%$ body segments mapped to source timestamps; forward chronological order. |
-| **4. Cross-Modal Audio-Visual Coupling** | **15%** | Deterministic + Index Matching (0 tokens) | Video shot duration $\le 12\text{s}$, character visual presence matches narration entities, timeline drift $|\Delta t| < 0.1\text{s}$. |
-| **5. Pacing & Speaking Rate** | **5%** | Deterministic (0 tokens) | $220\text{--}280\text{ Chinese chars/min}$. |
-| **6. Commentary Depth & Insight** | **25%** | Semantic LLM Judge | Score $\ge 75/100$: Original analysis, character psychology, thematic deconstruction. |
-| **7. Authentic Mandarin Voice & Hook** | **20%** | Semantic LLM Judge | Score $\ge 75/100$: High-curiosity hook without spoilers, natural cinema essayist tone. |
+| **1. Movie Identity & Anti-Contamination** | **8%** | Deterministic (0 tokens) | Title isolation; foreign movie marker detection. |
+| **2. Cleanliness & Formatting** | **5%** | Deterministic (0 tokens) | 100 points: 0 JSON keys, 0 code fences, 0 TTS punctuation leaks. Hard fail on leak. |
+| **3. Lexical Diversity & Cliché Avoidance** | **8%** | Deterministic (0 tokens) | $\text{TTR} \ge 0.45$, $\text{Distinct-2} \ge 0.85$, 0 blacklist clichés. |
+| **4. Evidence & Temporal Alignment** | **7%** | Deterministic (0 tokens) | $100\%$ body segments mapped to source timestamps. |
+| **5. Storyteller Narrative Continuity** | **12%** | Deterministic (0 tokens) | Monotonicity $\ge 90\%$, Transition coherence on scene jumps $\ge 80\%$, Entity threading, 0 backward timeline regressions. |
+| **6. Cross-Modal Audio-Visual Coupling** | **15%** | Deterministic + Index Matching (0 tokens) | Content-grounded scene matching $\ge 80\%$, drift $|\Delta t| \le 0.5\text{s}$, 0 duplicate loop cuts, phase adherence. |
+| **7. Pacing & Speaking Rate** | **5%** | Deterministic (0 tokens) | $220\text{--}280\text{ Chinese chars/min}$. |
+| **8. Commentary Depth & Insight** | **20%** | Semantic LLM Judge | Score $\ge 75/100$: Original analysis, character psychology, thematic deconstruction. |
+| **9. Authentic Mandarin Voice** | **10%** | Semantic LLM Judge | Natural Chinese video essayist tone, avoidance of robotic/literal translations. |
+| **10. Hook Engagement & Tension** | **10%** | Semantic LLM Judge | Score $\ge 75/100$: High-curiosity hook without spoilers, dramatic narrative pull. |
 
 ---
 

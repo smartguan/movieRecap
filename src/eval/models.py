@@ -48,6 +48,19 @@ class AudioVideoCouplingMetrics(BaseModel):
     details: str = "Audio and video clips are tightly synchronized"
 
 
+class StoryContinuityMetrics(BaseModel):
+    temporal_monotonicity_score: float = Field(100.0, ge=0.0, le=100.0)
+    transition_coherence_ratio: float = Field(1.0, ge=0.0, le=1.0)
+    character_entity_thread_ratio: float = Field(1.0, ge=0.0, le=1.0)
+    visual_spine_contiguity_score: float = Field(100.0, ge=0.0, le=100.0)
+    continuity_score: float = Field(100.0, ge=0.0, le=100.0)
+    scene_jump_count: int = 0
+    unbridged_jump_count: int = 0
+    backward_jump_count: int = 0
+    discontinuity_events: list[str] = Field(default_factory=list)
+    details: str = "Narrative flow is strictly chronological and smoothly transitioned"
+
+
 class DeterministicMetrics(BaseModel):
     cleanliness_score: float = Field(100.0, ge=0.0, le=100.0)
     movie_identity_pass: bool = True
@@ -62,6 +75,7 @@ class DeterministicMetrics(BaseModel):
     chronological_order_pass: bool = True
     hard_failures: list[str] = Field(default_factory=list)
     av_coupling: AudioVideoCouplingMetrics = Field(default_factory=AudioVideoCouplingMetrics)
+    continuity: StoryContinuityMetrics = Field(default_factory=StoryContinuityMetrics)
 
 
 class SemanticMetrics(BaseModel):

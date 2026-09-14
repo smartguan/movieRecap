@@ -324,4 +324,104 @@ def test_av_scene_content_matching_eval():
     assert len(metrics.av_coupling.low_match_segments) == 0
 
 
+def test_storyteller_continuity_ideal_script():
+    """Verify that a smoothly transitioned, chronologically progressing script earns high continuity score."""
+    from src.eval.deterministic_eval import calculate_storyteller_continuity
+
+    segments = [
+        {
+            "segment_id": "narration-000",
+            "text": "如果一段早已离世的挚友账号突然更新，你会怎么做？故事从东京一家静谧的理发店拉开序幕。",
+            "supporting_scenes": [{"start_seconds": 30.0, "end_seconds": 80.0}],
+        },
+        {
+            "segment_id": "narration-001",
+            "text": "随后，同伴神色慌张地展示手机上弹出的诡异纸人咒符，恐怖阴影开始蔓延。",
+            "supporting_scenes": [{"start_seconds": 150.0, "end_seconds": 210.0}],
+        },
+        {
+            "segment_id": "narration-002",
+            "text": "为了弄清真相并救下同伴，女主毅然跨海来到台北，深入老旧道铺寻找破解之法。",
+            "supporting_scenes": [{"start_seconds": 2800.0, "end_seconds": 2860.0}],
+        },
+        {
+            "segment_id": "narration-003",
+            "text": "在惨烈搏杀过后，夜幕终被晨曦撕破，伤痕累累的两人终于走出了密林。",
+            "supporting_scenes": [{"start_seconds": 4800.0, "end_seconds": 4850.0}],
+        },
+    ]
+    story = {
+        "characters": [
+            {"name": "女主", "description": "主角"},
+            {"name": "同伴", "description": "好友"},
+        ]
+    }
+
+    metrics, dim = calculate_storyteller_continuity(segments, story=story, total_source_duration=5000.0)
+
+    assert metrics.backward_jump_count == 0
+    assert metrics.temporal_monotonicity_score == 100.0
+    assert metrics.transition_coherence_ratio == 1.0
+    assert metrics.unbridged_jump_count == 0
+    assert metrics.continuity_score >= 85.0
+    assert dim.passed is True
+    assert dim.name == "Storyteller Narrative Continuity"
+
+
+def test_storyteller_continuity_detects_backward_timeline_regressions():
+    """Verify that severe backward jumps are detected and penalize the storyteller continuity score."""
+    from src.eval.deterministic_eval import calculate_storyteller_continuity
+
+    segments = [
+        {
+            "segment_id": "narration-000",
+            "text": "故事在东京平静地展开。",
+            "supporting_scenes": [{"start_seconds": 100.0, "end_seconds": 150.0}],
+        },
+        {
+            "segment_id": "narration-001",
+            "text": "随后在台北的神庙与恶灵生死决战。",
+            "supporting_scenes": [{"start_seconds": 4500.0, "end_seconds": 4550.0}],
+        },
+        {
+            "segment_id": "narration-002",
+            "text": "突然又回到了理发店洗头剪发。",
+            "supporting_scenes": [{"start_seconds": 200.0, "end_seconds": 250.0}],
+        },
+    ]
+
+    metrics, dim = calculate_storyteller_continuity(segments)
+
+    assert metrics.backward_jump_count == 1
+    assert metrics.temporal_monotonicity_score < 80.0
+    assert any("Major backward timeline regression" in e for e in metrics.discontinuity_events)
+    assert dim.passed is False
+
+
+def test_storyteller_continuity_detects_unbridged_scene_jumps():
+    """Verify that jumping forward hundreds of seconds without transition words lowers transition coherence."""
+    from src.eval.deterministic_eval import calculate_storyteller_continuity
+
+    segments = [
+        {
+            "segment_id": "narration-000",
+            "text": "故事在东京展开。",
+            "supporting_scenes": [{"start_seconds": 50.0, "end_seconds": 100.0}],
+        },
+        {
+            "segment_id": "narration-001",
+            # Abrupt jump from 100s to 3000s without any transition markers ("随后", "为了", "来到", etc.)
+            "text": "香烛店的老板看着符文冷笑，店里的香炉升起青烟。",
+            "supporting_scenes": [{"start_seconds": 3000.0, "end_seconds": 3060.0}],
+        },
+    ]
+
+    metrics, dim = calculate_storyteller_continuity(segments)
+
+    assert metrics.scene_jump_count == 1
+    assert metrics.unbridged_jump_count == 1
+    assert metrics.transition_coherence_ratio == 0.0
+    assert any("without connective transition phrasing" in e for e in metrics.discontinuity_events)
+
+
 

@@ -1,10 +1,10 @@
 # Movie Commentary Autopilot
 
 **Product Requirements Document (PRD)**  
-**Version:** 0.4  
+**Version:** 0.5  
 **Date:** September 14, 2026  
 **Status:** Active  
-**ADR References:** [ADR 0004: Audio-Visual Semantic Alignment](docs/adr/0004_audio_visual_semantic_alignment.md) (Superseded), [ADR 0005: Content-Grounded Scene Selection](docs/adr/0005_content_grounded_scene_selection.md)  
+**ADR References:** [ADR 0004: Audio-Visual Semantic Alignment](docs/adr/0004_audio_visual_semantic_alignment.md) (Superseded), [ADR 0005: Content-Grounded Scene Selection](docs/adr/0005_content_grounded_scene_selection.md), [ADR 0006: V3 Video-First Narrative Spine Engine](docs/adr/0006_v3_video_first_narrative_spine.md)  
 
 ## 1. Executive summary
 
@@ -275,9 +275,15 @@ The clip planner shall:
 - Use generated or licensed supplementary visuals where a suitable source scene is unavailable.
 - Treat cropping, reframing, overlays, or clip shortening as editorial choices, not as rights protection.
 
-There shall be no feature intended to bypass or defeat copyright-detection systems.
+Candidate retrieval and video generation support two interchangeable paradigms for A/B testing (ADR 0005 & ADR 0006):
 
-Candidate retrieval must be token-efficient and content-grounded (ADR 0005). The system shall build an in-memory Semantic Scene Index (`src/media/scene_matcher.py`) combining subtitle transcripts, local summaries, character presence, and bilingual domain concept mappings. Scenes are selected via a multi-signal affinity scoring model (concept mapping, transcript token overlap, local summary correlation, phase window alignment, and chronological smoothness) while enforcing anti-looping and minimum clip spacing ($8.0$s). Multi-modal models may judge reduced candidate sets if necessary; full-movie vision LLM scanning is strictly prohibited.
+1. **V3 Video-First Narrative Spine Engine (`algo_version="v3"`, Default)**:
+   - **Deterministic Sequence Clustering (`src/media/sequence_clusterer.py`)**: Merges granular shot cuts into contiguous macro-scenes (45s–120s) based on dialogue continuity and character presence without cutting dialogue in half.
+   - **Main Story Filter (`src/ai/story_filter.py`)**: Filters sideline subplots and atmospheric filler to extract 16–22 key dramatic continuous sequences hitting the 1/5 runtime budget (~18.9 min for a 94.6 min film) across all 5 narrative phases.
+   - **Video-Grounded Script Synthesis (`src/ai/video_grounded_script.py`)**: Commentary is written directly about and synchronized with each contiguous video sequence, with connective transition lead-ins bridging time jumps.
+
+2. **V2 Script-First Content-Grounded Engine (`algo_version="v2"`, Baseline)**:
+   - Retained intact for A/B benchmarking. Builds an in-memory Semantic Scene Index (`src/media/scene_matcher.py`) combining subtitle transcripts, local summaries, character presence, and bilingual domain concept mappings. Scenes are selected via multi-signal affinity scoring and strict phase guards.
 
 ### FR-8: Video assembly
 
@@ -318,6 +324,7 @@ The system shall verify:
 - Movie title, year, character, and actor references are consistent.
 - Final duration is within the configured range.
 - No temporary watermarks, debug overlays, filenames, prompts, or internal identifiers appear.
+- **Storyteller Narrative Continuity (FR-Eval)**: The evaluator shall deterministically audit temporal monotonicity (flagging backward timeline jumps), discourse transition coherence (verifying bridging phrasing across scene jumps $\ge 45$s), character entity threading (preventing uncontextualized subject shifts), and visual narrative spine contiguity (macro-scene stability vs. micro-fragmentation).
 
 QA shall produce a human-readable report with pass, warning, and fail findings. A failed critical check blocks upload.
 

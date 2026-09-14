@@ -200,6 +200,34 @@ TASK_ANTI_SLOP_EVALUATION = SemanticTask(
     cacheable=False,
 )
 
+TASK_CLASSIFY_SEQUENCES = SemanticTask(
+    name="classify_sequences",
+    description="Classify narrative sequences into main story vs side story/filler and score dramatic importance",
+    reason_not_deterministic=(
+        "Judging narrative significance, distinguishing primary dramatic arc from secondary subplots "
+        "or atmospheric filler requires dramatic storytelling judgment"
+    ),
+    model_tier="default",
+    max_input_tokens=6000,
+    max_output_tokens=3000,
+    max_cost_usd=0.08,
+    cacheable=True,
+)
+
+TASK_SYNTHESIZE_GROUNDED_NARRATION = SemanticTask(
+    name="synthesize_grounded_narration",
+    description="Synthesize video-grounded commentary directly tracking on-screen dialogue and action with connective transitions",
+    reason_not_deterministic=(
+        "Writing compelling commentary that interprets Japanese dialogue, describes visual actions accurately, "
+        "bridges scene transitions, and matches exact clip durations requires creative Mandarin narrative generation"
+    ),
+    model_tier="strong",
+    max_input_tokens=6000,
+    max_output_tokens=3000,
+    max_cost_usd=0.10,
+    cacheable=True,
+)
+
 # All registered tasks
 ALL_TASKS = [
     TASK_SCENE_DESCRIPTION,
@@ -214,6 +242,8 @@ ALL_TASKS = [
     TASK_ANTI_SLOP_EVALUATION,
     TASK_TITLE_GENERATION,
     TASK_DESCRIPTION_GENERATION,
+    TASK_CLASSIFY_SEQUENCES,
+    TASK_SYNTHESIZE_GROUNDED_NARRATION,
 ]
 
 
