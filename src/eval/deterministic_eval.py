@@ -28,6 +28,101 @@ from src.eval.models import (
 logger = logging.getLogger(__name__)
 
 
+def check_av_semantic_alignment(
+    segments: list[dict[str, Any]],
+    edit_decisions: list[dict[str, Any]],
+    total_source_duration: float,
+    movie_title: str = "",
+) -> tuple[float, int, list[str]]:
+    """
+    Audit whether visual clip timestamps align with narration semantic phases (ADR 0004).
+
+    Returns:
+        (alignment_score, mismatch_count, list of findings)
+    """
+    if not edit_decisions or not segments:
+        return 100.0, 0, []
+
+    findings: list[str] = []
+    mismatches = 0
+    total_checks = 0
+    title_clean = movie_title or ""
+
+    for i, dec in enumerate(edit_decisions):
+        text = dec.get("text", "")
+        src_st = dec.get("source_start", 0.0)
+
+        # 1. Check movie-specific semantic phase landmarks
+        if "诅咒" in title_clean or "Curse" in title_clean:
+            # Act 5: Dawn / Reflection (4900.0s+) - Check early to avoid Act 1 match
+            if any(k in text for k in ["晨光穿透", "走出密林", "重回东京", "注销沉寂", "回顾《诅咒》", "人性执念"]):
+                total_checks += 1
+                if not (4800.0 <= src_st <= total_source_duration + 5.0):
+                    mismatches += 1
+                    findings.append(
+                        f"AV Semantic Disconnect: Clip {i} ('{text[:24]}...') at {src_st:.1f}s is outside dawn resolution phase [4800s+]"
+                    )
+
+            # Act 4: Temple / Ghost fight / Mother doll (4300.0 - 5150.0s)
+            elif any(k in text for k in ["荒废神庙", "古老庙宇", "红衣怨灵", "母偶", "防风打火机", "殿门轰然紧闭", "深山密林", "神龛深处"]):
+                total_checks += 1
+                if not (4300.0 <= src_st <= 5150.0):
+                    mismatches += 1
+                    findings.append(
+                        f"AV Semantic Disconnect: Clip {i} ('{text[:24]}...') at {src_st:.1f}s is outside abandoned temple fight phase [4300-5150s]"
+                    )
+
+            # Act 3: Taiwan / Taipei / Incense shop / Bullying investigation (2800.0 - 4500.0s)
+            elif any(k in text for k in ["老旧街巷", "阴冷骑楼", "香烛道铺", "七日绝魂煞", "校园霸凌", "恶毒留言截图", "身披湿透红衣"]):
+                total_checks += 1
+                if not (2800.0 <= src_st <= 4500.0):
+                    mismatches += 1
+                    findings.append(
+                        f"AV Semantic Disconnect: Clip {i} ('{text[:24]}...') at {src_st:.1f}s is outside Taiwan investigation phase [2800-4500s]"
+                    )
+
+            # Act 2: Panic / Bathtub / Flight departure (850.0 - 3000.0s)
+            elif any(k in text for k in ["自家浴缸", "烧焦的纸人", "死于非命", "翻箱倒柜", "飞往台北的航班", "走出机场大厅"]):
+                total_checks += 1
+                if not (800.0 <= src_st <= 3100.0):
+                    mismatches += 1
+                    findings.append(
+                        f"AV Semantic Disconnect: Clip {i} ('{text[:24]}...') at {src_st:.1f}s is outside Act 2 departure phase [800-3100s]"
+                    )
+
+            # Act 1: Tokyo hair salon / work (0.0 - 1000.0s)
+            elif any(k in text for k in ["理发店", "修剪发丝", "收音机播放", "冲进休息室", "剪发", "镜子中反射出"]):
+                total_checks += 1
+                if not (0.0 <= src_st <= 1000.0):
+                    mismatches += 1
+                    findings.append(
+                        f"AV Semantic Disconnect: Clip {i} ('{text[:24]}...') at {src_st:.1f}s is outside Tokyo salon phase [0-1000s]"
+                    )
+
+        # 2. General cross-act chronological phase check for any movie
+        if i == 0 and total_source_duration > 180.0:
+            total_checks += 1
+            if src_st > total_source_duration * 0.25:
+                mismatches += 1
+                findings.append(
+                    f"AV Hook Disconnect: Hook clip at {src_st:.1f}s is outside introductory phase (>{total_source_duration * 0.25:.1f}s)"
+                )
+        elif i == len(edit_decisions) - 1 and total_source_duration > 180.0:
+            total_checks += 1
+            if src_st < total_source_duration * 0.70:
+                mismatches += 1
+                findings.append(
+                    f"AV Conclusion Disconnect: Conclusion clip at {src_st:.1f}s is outside resolution phase (<{total_source_duration * 0.70:.1f}s)"
+                )
+
+    if total_checks == 0:
+        return 100.0, 0, []
+
+    alignment_ratio = max(0.0, (total_checks - mismatches) / total_checks)
+    score = round(alignment_ratio * 100.0, 1)
+    return score, mismatches, findings
+
+
 def evaluate_deterministic(
     script: dict[str, Any],
     story: dict[str, Any] | None = None,
@@ -35,6 +130,7 @@ def evaluate_deterministic(
     edit_decisions: list[dict[str, Any]] | None = None,
     timeline_audio_duration: float | None = None,
 ) -> tuple[DeterministicMetrics, list[DimensionScore], EvaluatorTelemetry]:
+
     """
     Run deterministic evaluation suite on generated script and edit assets.
 
@@ -200,13 +296,15 @@ def evaluate_deterministic(
     )
 
     # 4. Cross-Modal Audio-Visual Coupling & Timeline Coverage (15% weight)
-    # Checks duration drift, shot duration distribution, timeline span, anti-looping, and visual character matching
+    # Checks duration drift, shot duration distribution, timeline span, anti-looping, visual character matching, and AV semantic phase alignment
     max_shot_duration = 0.0
+
     total_drift = 0.0
     matched_characters = 0
     total_character_checks = 0
     duplicate_clip_loops = 0
     timeline_coverage_ratio = 1.0
+    tot_src_dur = scene_index.get("duration_seconds", 300.0) if scene_index else 300.0
 
     known_characters = [c.get("name") for c in story.get("characters", []) if isinstance(c, dict) and c.get("name")] if story else []
 
@@ -229,9 +327,16 @@ def evaluate_deterministic(
         if len(edit_decisions) >= 3:
             min_src = min(d.get("source_start", 0.0) for d in edit_decisions)
             max_src = max(d.get("source_end", 0.0) for d in edit_decisions)
-            tot_src_dur = scene_index.get("duration_seconds", 300.0) if scene_index else 300.0
             if tot_src_dur > 0:
                 timeline_coverage_ratio = min(1.0, (max_src - min_src) / tot_src_dur)
+
+    # Run Cross-Modal AV Semantic Alignment Audit
+    av_sem_score, phase_mismatches, phase_findings = check_av_semantic_alignment(
+        segments=segments,
+        edit_decisions=edit_decisions or [],
+        total_source_duration=tot_src_dur,
+        movie_title=target_title,
+    )
 
     for seg in segments:
         text = seg.get("text", "")
@@ -265,8 +370,12 @@ def evaluate_deterministic(
     if duplicate_clip_loops > 0:
         coupling_score -= min(40.0, duplicate_clip_loops * 15.0)
         hard_failures.append(f"Visual repetition defect: {duplicate_clip_loops} consecutive looping/duplicate source clip transitions detected")
-    if timeline_coverage_ratio < 0.35 and (scene_index.get("duration_seconds", 0) if scene_index else 0) > 180.0:
+    if timeline_coverage_ratio < 0.35 and tot_src_dur > 180.0:
         coupling_score -= (0.35 - timeline_coverage_ratio) * 40.0
+    if phase_mismatches > 0:
+        coupling_score -= min(40.0, phase_mismatches * 15.0)
+        if phase_mismatches >= 3:
+            hard_failures.append(f"Severe AV semantic misalignment: {phase_mismatches} narrative segments paired with wrong movie phase video footage")
 
     coupling_score = max(0.0, round(coupling_score, 1))
 
@@ -277,23 +386,26 @@ def evaluate_deterministic(
         coupling_findings.append(f"Shot duration exceeds dynamic threshold: {max_shot_duration:.1f}s > 35s")
     if duplicate_clip_loops > 0:
         coupling_findings.append(f"Detected {duplicate_clip_loops} duplicate/looping clip transitions")
-    if timeline_coverage_ratio < 0.40 and (scene_index.get("duration_seconds", 0) if scene_index else 0) > 180.0:
+    if timeline_coverage_ratio < 0.40 and tot_src_dur > 180.0:
         coupling_findings.append(f"Low timeline coverage: spans {timeline_coverage_ratio * 100:.1f}% of movie runtime")
+    coupling_findings.extend(phase_findings)
 
     av_coupling_metrics = AudioVideoCouplingMetrics(
         av_duration_drift_seconds=round(total_drift, 3),
         character_visual_alignment_ratio=round(char_alignment_ratio, 3),
         max_shot_duration_seconds=round(max_shot_duration, 2),
         dynamic_pacing_pass=dynamic_pacing_pass,
+        av_semantic_alignment_score=av_sem_score,
+        phase_mismatch_count=phase_mismatches,
         coupling_score=coupling_score,
-        details=f"Drift={total_drift:.2f}s, Character Visual Grounding={char_alignment_ratio * 100:.1f}%, Timeline Coverage={timeline_coverage_ratio * 100:.1f}%, Loops={duplicate_clip_loops}",
+        details=f"AV Semantic Alignment={av_sem_score:.1f}%, Drift={total_drift:.2f}s, Visual Grounding={char_alignment_ratio * 100:.1f}%, Timeline Coverage={timeline_coverage_ratio * 100:.1f}%, Loops={duplicate_clip_loops}",
     )
 
     av_coupling_dim = DimensionScore(
         name="Cross-Modal Audio-Visual Coupling",
         score=coupling_score,
         weight=0.15,
-        passed=coupling_score >= 70.0 and duplicate_clip_loops == 0,
+        passed=coupling_score >= 70.0 and duplicate_clip_loops == 0 and phase_mismatches == 0,
         details=av_coupling_metrics.details,
         findings=coupling_findings,
     )

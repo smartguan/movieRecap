@@ -106,28 +106,46 @@ def plan_and_extract_clips(
 
         chosen_start: float | None = None
 
-        # 1. Inspect proposed supporting scene timestamp
+        # 1. Inspect proposed supporting scene timestamp (Act-anchored)
         if supporting and isinstance(supporting, list) and isinstance(supporting[0], dict):
             prop_st = float(supporting[0].get("start_seconds", 0.0))
             prop_et = float(supporting[0].get("end_seconds", prop_st + needed_duration))
 
-            # Validate against out-of-bounds, duplicate looping, or backward leaps
-            is_duplicate = any(abs(prop_st - prev_st) < 8.0 for prev_st in used_start_timestamps)
-            is_severe_loop = (last_source_start > 0 and prop_st < last_source_start - 60.0)
+            # Validate against out-of-bounds, duplicate looping, or severe backward leaps
             is_valid_range = (0.0 <= prop_st <= total_source_duration)
+            is_duplicate = any(abs(prop_st - prev_st) < 8.0 for prev_st in used_start_timestamps)
+            is_severe_loop = (last_source_start > 0 and prop_st < last_source_start - 120.0)
 
             if is_valid_range and not is_duplicate and not is_severe_loop:
-                chosen_start = prop_st
+                if scenes:
+                    # Find matching scene in scene_index near prop_st that hasn't been used recently
+                    best_scene = None
+                    best_diff = float("inf")
+                    for s in scenes:
+                        st = float(s.get("start_seconds", 0.0))
+                        if any(abs(st - prev_st) < 8.0 for prev_st in used_start_timestamps):
+                            continue
+                        # Prefer scenes within the narrative phase window [prop_st - 40s, prop_et + 40s]
+                        diff = abs(st - prop_st)
+                        if diff < 60.0 and diff < best_diff:
+                            best_diff = diff
+                            best_scene = s
 
-        # 2. If supporting scene is missing/invalid/looping, find best scene from scene_index
+                    if best_scene:
+                        chosen_start = float(best_scene.get("start_seconds", prop_st))
+                    else:
+                        chosen_start = prop_st
+                else:
+                    chosen_start = prop_st
+
+        # 2. If supporting scene is missing, invalid, or duplicate loop, find closest unused scene to target_timestamp
         if chosen_start is None:
             if scenes:
-                # Find the scene in scene_index closest to target_timestamp that hasn't been used recently
                 best_scene = None
                 best_diff = float("inf")
                 for s in scenes:
                     st = float(s.get("start_seconds", 0.0))
-                    if any(abs(st - prev_st) < 10.0 for prev_st in used_start_timestamps):
+                    if any(abs(st - prev_st) < 8.0 for prev_st in used_start_timestamps):
                         continue
                     diff = abs(st - target_timestamp)
                     if diff < best_diff:

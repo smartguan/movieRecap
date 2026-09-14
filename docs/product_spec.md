@@ -1,9 +1,10 @@
 # Movie Commentary Autopilot
 
 **Product Requirements Document (PRD)**  
-**Version:** 0.2  
+**Version:** 0.3  
 **Date:** September 13, 2026  
-**Status:** Draft for MVP planning
+**Status:** Active  
+**ADR References:** [ADR 0004: Audio-Visual Semantic Alignment](docs/adr/0004_audio_visual_semantic_alignment.md)  
 
 ## 1. Executive summary
 

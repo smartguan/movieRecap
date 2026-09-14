@@ -228,3 +228,68 @@ def test_clip_planner_timeline_progression_and_anti_looping(mock_run, tmp_path):
     # Check that decisions span a significant portion of the movie timeline
     assert max(start_times) > 3500.0
 
+
+def test_av_semantic_phase_alignment_passes_when_synchronized():
+    """Verify that synchronized narration and footage pass AV semantic alignment."""
+    script = {
+        "title": "诅咒",
+        "segments": [
+            {"segment_id": "narration-000", "text": "故事从东京静谧的理发店修剪发丝开始。", "supporting_scenes": [{"start_seconds": 10.0, "end_seconds": 30.0}]},
+            {"segment_id": "narration-001", "text": "跨海抵达台北，在老旧街巷香烛道铺调查七日绝魂煞。", "supporting_scenes": [{"start_seconds": 3200.0, "end_seconds": 3250.0}]},
+            {"segment_id": "narration-002", "text": "午夜在荒废神庙与红衣怨灵决战，打火机点燃母偶。", "supporting_scenes": [{"start_seconds": 4700.0, "end_seconds": 4750.0}]},
+            {"segment_id": "narration-003", "text": "晨光穿透残破庙顶走出密林，重回东京街头反思。", "supporting_scenes": [{"start_seconds": 5200.0, "end_seconds": 5500.0}]},
+        ]
+    }
+    edit_decisions = [
+        {"segment_id": "narration-000", "duration": 10.0, "source_start": 20.0, "source_end": 30.0, "text": script["segments"][0]["text"]},
+        {"segment_id": "narration-001", "duration": 10.0, "source_start": 3250.0, "source_end": 3260.0, "text": script["segments"][1]["text"]},
+        {"segment_id": "narration-002", "duration": 10.0, "source_start": 4720.0, "source_end": 4730.0, "text": script["segments"][2]["text"]},
+        {"segment_id": "narration-003", "duration": 10.0, "source_start": 5300.0, "source_end": 5310.0, "text": script["segments"][3]["text"]},
+    ]
+    scene_index = {"duration_seconds": 5600.0, "scenes": []}
+
+    metrics, dims, _ = evaluate_deterministic(
+        script=script,
+        scene_index=scene_index,
+        edit_decisions=edit_decisions,
+    )
+
+    assert metrics.av_coupling.av_semantic_alignment_score == 100.0
+    assert metrics.av_coupling.phase_mismatch_count == 0
+    av_dim = next(d for d in dims if d.name == "Cross-Modal Audio-Visual Coupling")
+    assert av_dim.passed is True
+
+
+def test_av_semantic_phase_alignment_fails_when_disjointed():
+    """Verify that severe phase mismatches (e.g. Taiwan audio with Tokyo video) trigger QA failure."""
+    script = {
+        "title": "诅咒",
+        "segments": [
+            # Taiwan audio paired with Tokyo salon footage (50s)
+            {"segment_id": "narration-000", "text": "跨海抵达台北，在老旧街巷香烛道铺调查七日绝魂煞。", "supporting_scenes": [{"start_seconds": 3200.0, "end_seconds": 3250.0}]},
+            # Temple fight audio paired with Tokyo apartment footage (800s)
+            {"segment_id": "narration-001", "text": "午夜在荒废神庙与红衣怨灵决战，防风打火机点燃母偶。", "supporting_scenes": [{"start_seconds": 4700.0, "end_seconds": 4750.0}]},
+            # Tokyo salon audio paired with Temple ghost footage (4800s)
+            {"segment_id": "narration-002", "text": "故事从东京理发店修剪发丝开始收音机播放轻缓音乐。", "supporting_scenes": [{"start_seconds": 10.0, "end_seconds": 30.0}]},
+        ]
+    }
+    edit_decisions = [
+        {"segment_id": "narration-000", "duration": 10.0, "source_start": 50.0, "source_end": 60.0, "text": script["segments"][0]["text"]},
+        {"segment_id": "narration-001", "duration": 10.0, "source_start": 800.0, "source_end": 810.0, "text": script["segments"][1]["text"]},
+        {"segment_id": "narration-002", "duration": 10.0, "source_start": 4800.0, "source_end": 4810.0, "text": script["segments"][2]["text"]},
+    ]
+    scene_index = {"duration_seconds": 5600.0, "scenes": []}
+
+    metrics, dims, _ = evaluate_deterministic(
+        script=script,
+        scene_index=scene_index,
+        edit_decisions=edit_decisions,
+    )
+
+    assert metrics.av_coupling.phase_mismatch_count >= 3
+    assert metrics.av_coupling.av_semantic_alignment_score < 50.0
+    assert any("Severe AV semantic misalignment" in fail for fail in metrics.hard_failures)
+    av_dim = next(d for d in dims if d.name == "Cross-Modal Audio-Visual Coupling")
+    assert av_dim.passed is False
+
+
