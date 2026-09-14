@@ -314,7 +314,7 @@ def run_stage_generate(
     exporter = PlatformExporter(output_root=platform_base_dir)
     exported_dict = exporter.export_package(
         project_dir=stage_work_dir,
-        movie_title=movie_title,
+        movie_title=f"{movie_title}{version_suffix}",
         metadata=story_dict,
     )
     exported_files = list(exported_dict.values())
