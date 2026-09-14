@@ -55,8 +55,10 @@ class SlopDetector:
         scene_index = json.loads(scene_index_file.read_text(encoding="utf-8")) if scene_index_file.exists() else {}
 
         # Fallback to stage 2 analyzed directory if evaluating a stage 3 directory
+        import re
         slug = project_dir.name
-        stage2_dir = Path("data/stages/2_analyzed") / slug
+        clean_slug = re.sub(r"_v\d+$", "", slug)
+        stage2_dir = Path("data/stages/2_analyzed") / clean_slug
         if not story and stage2_dir.exists() and (stage2_dir / "story_understanding.json").exists():
             story = json.loads((stage2_dir / "story_understanding.json").read_text(encoding="utf-8"))
         if not scene_index and stage2_dir.exists() and (stage2_dir / "scene_index.json").exists():

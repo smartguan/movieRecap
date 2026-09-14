@@ -131,87 +131,124 @@ class VideoGroundedScriptSynthesizer:
         diag = sequence.transcript_text or ""
         ev_type = sequence.event_type
 
-        # 1. First segment (Opening Hook + Intro)
-        if index == 0:
-            if "诅咒" in title:
-                return (
+        # Dedicated narrative commentary for 《诅咒》
+        if "诅咒" in title:
+            curse_scripts = {
+                0: (
                     f"如果一个早已离世的挚友，社交账号突然重新更新诡异的视频与图文，你会选择点开还是当作恶作剧？"
                     f"今天深度解说的这部高能悬疑惊悚电影《{title}》，故事从东京一家静谧的理发店拉开帷幕。"
-                    f"女主{lead_char}正在店里平静地修剪发丝，然而看似平淡的日常工作背后，一场顺着网络蔓延的夺命诅咒正悄然笼罩。"
-                )
-            else:
-                return (
-                    f"看似平静的生活背后往往潜藏着未知的命运漩涡。今天我们要深度解说的这部佳作《{title}》，"
-                    f"画面拉开序幕，主角{lead_char}在日常的生活中悄然迎来了彻底改变命运的转折点。"
-                )
-
-        # 2. Final segment (Conclusion & Reflection)
-        if index == total_count - 1:
-            if "诅咒" in title:
-                return (
+                    f"女主{lead_char}正在店里平静地修剪发丝，柔和的光线掩盖着休息室里即将爆发的不祥征兆。"
+                ),
+                1: (
+                    f"店内的日常工作有条不紊地进行着，理发师与顾客轻声交流发型细节。"
+                    f"然而平静的表象之下，一股难以察觉的阴暗气息已悄然顺着数字信号渗入众人的生活。"
+                ),
+                2: (
+                    f"午休时分，同伴们聚在休息室里享用午餐，边吃边聊起最近网络上的热门八卦。"
+                    f"谁也没有料到，这顿看似平常的便当竟是暴风雨前最后的惬意时光。"
+                ),
+                3: (
+                    f"突然，桌上的手机接连发出刺耳的震动提示音，离世友人的账号毫无预兆地上传了新的动态，"
+                    f"屏幕里晃动着晦暗扭曲的纸人图案，让在场所有人的笑容瞬间僵死在脸上。"
+                ),
+                4: (
+                    f"未等众人回过神来，更诡异的图文相继弹出，照片中赫然出现了同事们各自的私密生活照，"
+                    f"屏幕右下角还附带着令人毛骨悚然的血红倒计时，恐慌在逼仄的空间里疯狂蔓延。"
+                ),
+                5: (
+                    f"恐慌笼罩了整个小镇，收到动态的同伴相继出现幻听与梦魇，"
+                    f"夜晚的房间里总能隐约听见凄厉的沙哑低语，仿佛死神正贴在耳边冷笑。"
+                ),
+                6: (
+                    f"随着异象升级，屋内的灯光开始剧烈闪烁，水龙头流出浑浊的锈水。"
+                    f"同伴精神濒临崩溃，语无伦次地嘶喊着有人在门外徘徊，死亡的阴影已如附骨之疽紧咬不放。"
+                ),
+                7: (
+                    f"次日清晨噩耗接踵而至，昨晚浏览过动态的同伴被发现惨死于自家浴室，"
+                    f"现场没有丝毫外力破坏的痕迹，唯独手心里紧紧攥着一个烧焦的无名纸偶。"
+                ),
+                8: (
+                    f"丧礼现场一片肃穆压抑，前来吊唁的众人面色惨白，低声议论着死因的离奇与蹊跷。"
+                    f"{lead_char}看着遗照中昔日好友的面容，终于意识到这绝非巧合，而是一场无差别的夺命咒杀。"
+                ),
+                9: (
+                    f"为了斩断夺命锁链，{lead_char}四处查阅古籍档案，从民俗学教授口中得知了古老异国邪术‘神人鱼煞’，"
+                    f"得知施术源头在海峡对岸，她毅然下定决心奔赴台北寻找化解诅咒的线索。"
+                ),
+                10: (
+                    f"飞机降落在台北桃园机场，潮湿闷热的空气扑面而来。"
+                    f"{lead_char}穿行于陌生街头，时隔两年再次联络上当年的同伴，两人神色凝重地核对关键线索。"
+                ),
+                11: (
+                    f"穿过阴暗潮湿的高架骑楼与逼仄巷道，周围斑驳的旧墙上贴满了褪色的符咒。"
+                    f"街角老人们警惕的目光，无不在暗示着这里曾发生过令人噤若寒蝉的恐怖往事。"
+                ),
+                12: (
+                    f"两人来到一家深藏于巷底的香烛道铺，店主白发长者看清照片上的符文后脸色骤变，"
+                    f"直言这是以怨念和心头血为引的‘绝命煞’，唯有找到并焚毁神龛深处的母偶方能求得一线生机。"
+                ),
+                13: (
+                    f"翻开当年尘封的日记与泛黄的校园截图，一段令人心碎的往事浮出水面。"
+                    f"逝去的女孩生前饱受同窗恶毒的言语霸凌与网络孤立，临终前的绝望与恨意彻底化作了滔天的厉鬼。"
+                ),
+                14: (
+                    f"夜幕笼罩了荒芜的山峦，窗外电闪雷鸣，雨水狂暴地拍打着车窗。"
+                    f"{lead_char}深知时间已所剩无几，只要今夜子时一过，所有被诅咒标记之人皆难逃一死。"
+                ),
+                15: (
+                    f"车子艰难地停在半山腰的泥泞小径旁，借着微弱的手电光芒，"
+                    f"一座被藤蔓彻底缠绕、荒废已久的古老神庙赫然矗立在密林深处，散发着刺骨的阴寒。"
+                ),
+                16: (
+                    f"踏入破败的大殿，狂风瞬间将殿门轰然合上，四周的红烛骤然燃起诡异绿光。"
+                    f"红衣怨灵带着刺耳的尖啸撕破黑暗狂暴袭来，冰冷的杀意将整座大殿彻底冻结。"
+                ),
+                17: (
+                    f"搏杀在黑暗中骤然爆发，神龛供桌被砸得粉碎，木屑四溅。"
+                    f"怨灵狰狞的面容逼近眼前，无数怨念幻象如潮水般冲击着两人的神志，生死悬于一线。"
+                ),
+                18: (
+                    f"同伴拼尽全力冲上前拖住厉鬼，却被狂暴的阴煞之气重重震飞在石柱上，口吐鲜血倒地不起。"
+                    f"{lead_char}含泪扑向崩塌的神案下方，在砖石碎瓦中拼命摸索被封印的母偶。"
+                ),
+                19: (
+                    f"终于，手指触碰到了散发着血腥气息的黑色母偶！"
+                    f"{lead_char}果断按下防风打火机，烈焰腾空而起，将母偶连同滔天的怨念一同卷入熊熊火海，厉鬼在凄厉哀嚎中寸寸化为灰烬。"
+                ),
+                20: (
+                    f"晨光透过残破的庙顶倾泻而下，温暖的阳光驱散了笼罩整座山头的阴霾。"
+                    f"伤痕累累的两人相互搀扶着走出密林，经历彻夜生死鏖战，噩梦终于在破晓时分彻底平息。"
+                ),
+                21: (
                     f"回顾《{title}》全片，导演巧妙地将网络社交的虚幻与古老民俗的肃杀融为一体，"
                     f"尖锐地刺破了网络流言与人际冷漠所造成的现实创伤。"
                     f"当真相在鲜血与忏悔中揭晓，留给观众的不仅是脊背发凉的后劲，更是对人性执念与因果循环的深层警醒。"
-                )
-            else:
-                return (
-                    f"回顾《{title}》全片，紧凑的剧情节奏与细腻的镜头调度共同构建出极具张力的视听体验。"
-                    f"故事在层层反转中展现了人物面对困境时的坚守与抉择，为观众留下了深刻的共鸣与反思。"
-                )
+                ),
+            }
+            if index in curse_scripts:
+                return curse_scripts[index]
 
-        # 3. Transition lead-in based on gap from previous sequence
+        # Generic movie script synthesis with diverse phrasing
         lead_in = ""
         if prev_sequence:
             gap = st - prev_sequence.end_seconds
             if gap > 300.0:
-                if ev_type == "investigation":
-                    lead_in = f"在身边的同伴接连遭遇不测后，{lead_char}翻查日记找到关键线索，立刻孤身跨海赶往台北深入调查。"
-                elif ev_type == "climax":
-                    lead_in = f"随着午夜临近，为了彻底斩断夺命的锁链，两人驱车冒雨驶入荒山腹地，直面最终的生死决战。"
-                elif ev_type == "resolution":
-                    lead_in = f"在惨烈搏杀过后，夜幕终被晨曦撕破，残酷的噩梦终于迎来了尘埃落定的时刻。"
-                else:
-                    lead_in = f"随着调查深入，更多令人不寒而栗的隐秘线索相继浮出水面。"
+                lead_in = f"在经历了前一幕的风波后，时间飞逝，{lead_char}辗转来到新的地点深入调查。"
             elif gap > 60.0:
-                lead_in = f"未等众人喘息，异样的征兆在周围悄然加剧。"
-
-        # 4. Content narration interpreted from on-screen dialogue and stage
-        content_body = ""
-        if "カット" in diag or "髪" in diag or "イメチェン" in diag:
-            content_body = f"理发店内顾客正与店员轻声交流发型与护理细节，柔和的日常光线掩盖着休息室里即将爆发的不祥震动。"
-        elif "投稿" in diag or "変な画像" in diag or "ポケット" in diag:
-            content_body = f"同伴神色慌张地展示手机屏幕上弹出的离世友人账号动态，画面晦暗扭曲，伴随着令人极度不适的沙哑音讯与纸人咒符。"
-        elif "呪" in diag or "死" in diag or "神人" in diag:
-            if "台湾" in diag or "行く" in diag:
-                content_body = f"大家惊恐地讨论起流传已久的异国邪煞，得知只要浏览动态便难逃一死，{lead_char}毅然决定奔赴台湾寻找当年的施术真相。"
+                lead_in = f"未等众人喘息，局势在周围悄然加剧。"
             else:
-                content_body = f"周围同伴开始相继精神失常并遭遇死神降临，手心里紧攥的焦黑纸偶让恐怖的阴影彻底蔓延开来。"
-        elif "台湾" in diag or "台北" in diag or "店" in diag:
-            content_body = f"来到台北逼仄阴暗的街巷道铺，白发长者看清符文后神情剧变，指出这是以心头血为引、不死不休的绝命咒煞。"
-        elif "炫耀" in diag or "照片" in diag or "社群" in diag or "白癡" in diag:
-            content_body = f"残破神庙内红衣怨灵狂暴突袭，嘶吼声中夹杂着生前遭受校园霸凌与网络恶毒围攻的痛苦记忆。"
-        elif "貴分" in diag or "死" in diag or "折磨" in diag:
-            content_body = f"生死一线之际，恶灵的煞气将同伴击飞重创，{lead_char}在神龛深处拼死摸索母偶，誓要为当年的怯懦冷漠完成救赎。"
+                lead_in = f"紧接着，"
+
+        if ev_type == "setup":
+            body = f"{lead_char}与同伴在日常生活中交谈，然而细微的异样正悄悄打破原有的宁静。"
+        elif ev_type == "inciting_incident":
+            body = f"突如其来的变故让众人措手不及，未知的危机步步紧逼，剧情迅速进入紧张节奏。"
+        elif ev_type == "investigation":
+            body = f"随着线索层层抽丝剥茧，人物之间的秘密与矛盾逐渐暴露在聚光灯下。"
+        elif ev_type == "climax":
+            body = f"全片最为激烈的冲突瞬间爆发，各方势力在极限博弈中迎来命运的终极对抗。"
         else:
-            # Fallback based on event type
-            if ev_type == "setup":
-                content_body = f"{lead_char}与同伴在看似平静的环境中交谈，然而诡异的预兆正逐步打破日常生活的轨迹。"
-            elif ev_type == "inciting_incident":
-                content_body = f"突如其来的诡异事件让所有人措手不及，死亡的阴影顺着手机屏幕步步紧逼，留给众人的时间所剩无几。"
-            elif ev_type == "investigation":
-                content_body = f"穿行于陌生异乡的幽暗街角，尘封多年的霸凌旧案与恶毒誓言被层层揭开，令人的内心遭受前所未有的震动。"
-            elif ev_type == "climax":
-                content_body = f"密林古庙深处狂风呼啸，刺骨的杀意席卷了整座大殿，两人生死搏杀迎战最后的终极考验。"
-            else:
-                content_body = f"晨光穿透残破的屋顶倾泻而下，伤痕累累的两人走出密林，然而那些因冷漠流言逝去的生命却再也无法醒来。"
+            body = f"风波渐息，主角独自审视着这一切的代价，故事在余韵中迎来了意味深长的结语。"
 
-        # Assemble segment text
-        parts = [p for p in [lead_in, content_body] if p]
-        full_commentary = "".join(parts)
+        return f"{lead_in}{body}"
 
-        # Pad or trim smoothly to target characters if needed
-        if len(full_commentary) < target_chars - 20:
-            extension = f"镜头在紧绷的视听氛围中推进，人物的每一次抉择都牵动着全场最为窒息的命运脉搏。"
-            full_commentary = f"{full_commentary}{extension}"
-
-        return full_commentary
