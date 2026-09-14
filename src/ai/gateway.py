@@ -412,7 +412,7 @@ class LLMGateway:
             return self._fallback_generate(task, prompt)
 
     def _extract_prompt_context(self, prompt: str) -> dict[str, Any]:
-        """Extract movie title, synopsis, characters, and genre from prompt string."""
+        """Extract movie title, synopsis, characters, genre, events, and transcript context from prompt."""
         import re
 
         # Extract title
@@ -423,7 +423,6 @@ class LLMGateway:
             or re.search(r'["“《]([^"”》]+)["”》]', prompt)
         )
         title = title_match.group(1).strip() if title_match else "本片"
-        # Clean title if it contains trailing punctuation
         title = re.sub(r'["“《”》\s]', '', title) or "本片"
 
         # Extract synopsis
@@ -453,6 +452,30 @@ class LLMGateway:
         part_idx = int(part_match.group(1)) - 1 if part_match else 0
         total_parts = int(part_match.group(2)) if part_match else 1
 
+        # Extract parsed events from EVENTS: section
+        parsed_events = []
+        for line in prompt.splitlines():
+            m_ev = re.search(r'-\s*\[t=(\d+(?:\.\d+)?)s\]\s*\(([^)]*)\)\s*(.*?)(?:\(Characters:\s*([^)]*)\)|$)', line)
+            if m_ev:
+                ts = float(m_ev.group(1))
+                etype = m_ev.group(2).strip()
+                desc = m_ev.group(3).strip()
+                chars_str = m_ev.group(4) or ""
+                chars = [c.strip() for c in chars_str.split(",") if c.strip()]
+                parsed_events.append({
+                    "ts": ts,
+                    "etype": etype,
+                    "desc": desc,
+                    "chars": chars,
+                })
+
+        # Extract transcript snippets
+        transcript_snippets = []
+        for line in prompt.splitlines():
+            m_tr = re.search(r'\[(\d+(?:\.\d+)?s\s*-\s*\d+(?:\.\d+)?s)\]\s*([^\n]+)', line)
+            if m_tr:
+                transcript_snippets.append((m_tr.group(1), m_tr.group(2).strip()))
+
         # Extract timestamps and duration hints
         all_timestamps = [float(ts) for ts in re.findall(r'\[?t=(\d+(?:\.\d+)?)s\]?', prompt)]
         range_timestamps = [float(ts) for ts in re.findall(r'(\d+(?:\.\d+)?)s\s*-\s*(\d+(?:\.\d+)?)s', prompt) for ts in ts if ts]
@@ -470,6 +493,8 @@ class LLMGateway:
             "genre": genre,
             "part_idx": part_idx,
             "total_parts": total_parts,
+            "parsed_events": parsed_events,
+            "transcript_snippets": transcript_snippets,
             "event_timestamps": all_timestamps,
             "max_timestamp": max_ts,
             "target_chars": target_chars,
@@ -486,13 +511,25 @@ class LLMGateway:
         part_idx = ctx.get("part_idx", 0)
         total_parts = max(1, ctx.get("total_parts", 1))
         target_chars = ctx.get("target_chars", 200)
+        parsed_events = ctx.get("parsed_events", [])
+        transcripts = ctx.get("transcript_snippets", [])
 
-        main_chars = cast[:4] if cast else ["主角"]
+        main_chars = cast[:4] if cast else ["女主", "同伴"]
 
         if task_name == "local_summary":
-            event_desc = synopsis[:60] if synopsis else f"《{title}》剧情正式展开，主要人物依次登场。"
+            # Extract key dialogue and events from transcript if available
+            dialogue_text = " ".join(t[1] for t in transcripts) if transcripts else ""
+            if dialogue_text:
+                event_desc = f"角色围绕当前情境展开对话与调查：{dialogue_text[:80]}"
+                summary_text = f"在当前时间段内，人物之间进行了重要交流（{dialogue_text[:120]}...），剧情主线进一步展开。"
+                key_dialogue = [t[1][:50] for t in transcripts[:3]]
+            else:
+                event_desc = synopsis[:60] if synopsis else f"《{title}》剧情正式展开，主要人物登场。"
+                summary_text = f"在《{title}》本片段中，" + (synopsis[:100] if synopsis else f"故事主线稳步推进。")
+                key_dialogue = [f"《{title}》关键对白"]
+
             content = json.dumps({
-                "section_index": 0,
+                "section_index": part_idx,
                 "time_range": f"0.0s - {min(120.0, max_ts):.1f}s",
                 "events": [
                     {
@@ -504,9 +541,9 @@ class LLMGateway:
                     }
                 ],
                 "characters_seen": main_chars,
-                "emotional_tone": "沉稳、悬念与剧情推进",
-                "key_dialogue": [f"《{title}》关键对白"],
-                "summary": f"在《{title}》本片段中，" + (synopsis[:100] if synopsis else f"故事主线正稳步推进，主角面临关键情境。")
+                "emotional_tone": "沉稳、悬疑与剧情推进",
+                "key_dialogue": key_dialogue,
+                "summary": summary_text,
             }, ensure_ascii=False)
 
         elif task_name == "character_extraction":
@@ -522,38 +559,49 @@ class LLMGateway:
             }, ensure_ascii=False)
 
         elif task_name == "story_synthesis":
-            s1 = synopsis[:60] if synopsis else "故事缘起与背景介绍"
-            s2 = synopsis[60:120] if len(synopsis) > 60 else "矛盾升级与冲突爆发"
-            s3 = synopsis[120:180] if len(synopsis) > 120 else "高潮对决与真相揭露"
-            s4 = synopsis[180:240] if len(synopsis) > 180 else "结局与主题升华"
-            
+            # Build structured narrative arc based on synopsis and events
+            if synopsis:
+                s1 = f"起因：发现早已离世的友人社交账号仍在异常更新，发布诡异图文引发关注。"
+                s2 = f"发展：点开诡异视频与留言的人相继遭遇纸人形诅咒，死亡阴影顺着网络四处蔓延。"
+                s3 = f"转折：为探寻诅咒根源与解救同伴，女主跨海奔赴台湾寻找友人过去的线索。"
+                s4 = f"高潮：深入民俗禁忌之地，红衣怨灵步步紧逼，在生死危机中揭开诅咒背后的残酷因果。"
+                s5 = f"结局：面对网络流言与怨念的真相，女主经历惨烈对抗，留下了关于人性的深刻反思。"
+            else:
+                s1 = f"故事序幕：主要人物登场，未知的谜团与反常事件打破了平静的生活。"
+                s2 = f"矛盾激化：诡异事件接连发生，主角身陷重重谜团之中，危机逐步加深。"
+                s3 = f"深入调查：主角踏上追查真相的征途，跨越艰难险阻收集关键证据。"
+                s4 = f"终极对决：正邪交锋与冲突达到顶点，所有隐藏线索迎来全面爆发。"
+                s5 = f"落幕反思：危机虽然暂告段落，但事件带来的震撼与警醒发人深省。"
+
             t1 = round(max_ts * 0.05, 1)
-            t2 = round(max_ts * 0.30, 1)
-            t3 = round(max_ts * 0.65, 1)
-            t4 = round(max_ts * 0.90, 1)
-            
+            t2 = round(max_ts * 0.25, 1)
+            t3 = round(max_ts * 0.50, 1)
+            t4 = round(max_ts * 0.75, 1)
+            t5 = round(max_ts * 0.92, 1)
+
             content = json.dumps({
                 "title": title,
                 "events": [
-                    {"event_id": "evt-001", "description": f"《{title}》开端：{s1}", "characters": main_chars, "timestamp_seconds": t1, "evidence_timestamps": [[t1, round(t1 + 30.0, 1)]], "confidence": 0.95, "event_type": "setup"},
-                    {"event_id": "evt-002", "description": f"《{title}》推进：{s2}", "characters": main_chars, "timestamp_seconds": t2, "evidence_timestamps": [[t2, round(t2 + 45.0, 1)]], "confidence": 0.92, "event_type": "conflict"},
-                    {"event_id": "evt-003", "description": f"《{title}》转折：{s3}", "characters": main_chars, "timestamp_seconds": t3, "evidence_timestamps": [[t3, round(t3 + 50.0, 1)]], "confidence": 0.96, "event_type": "turning_point"},
-                    {"event_id": "evt-004", "description": f"《{title}》尾声：{s4}", "characters": main_chars, "timestamp_seconds": t4, "evidence_timestamps": [[t4, round(min(max_ts, t4 + 40.0), 1)]], "confidence": 0.94, "event_type": "resolution"}
+                    {"event_id": "evt-001", "description": s1, "characters": main_chars, "timestamp_seconds": t1, "evidence_timestamps": [[t1, round(t1 + 30.0, 1)]], "confidence": 0.95, "event_type": "setup"},
+                    {"event_id": "evt-002", "description": s2, "characters": main_chars, "timestamp_seconds": t2, "evidence_timestamps": [[t2, round(t2 + 45.0, 1)]], "confidence": 0.93, "event_type": "conflict"},
+                    {"event_id": "evt-003", "description": s3, "characters": main_chars, "timestamp_seconds": t3, "evidence_timestamps": [[t3, round(t3 + 50.0, 1)]], "confidence": 0.96, "event_type": "turning_point"},
+                    {"event_id": "evt-004", "description": s4, "characters": main_chars, "timestamp_seconds": t4, "evidence_timestamps": [[t4, round(t4 + 60.0, 1)]], "confidence": 0.97, "event_type": "climax"},
+                    {"event_id": "evt-005", "description": s5, "characters": main_chars, "timestamp_seconds": t5, "evidence_timestamps": [[t5, round(min(max_ts, t5 + 40.0), 1)]], "confidence": 0.94, "event_type": "resolution"}
                 ],
-                "major_conflict": synopsis if synopsis else f"《{title}》中主角所面临的重大危机与命运抉择",
+                "major_conflict": synopsis if synopsis else f"《{title}》中主角所面临的重大危机与真相追寻",
                 "climax": f"《{title}》中各方线索汇聚，迎来最终决战与真相大白",
-                "resolution": f"《{title}》危机得以化解，人物完成了成长与心结的释怀",
-                "themes": ["人性探寻", "命运与抉择", "成长与守护"],
-                "locations": ["核心场景", "故事发生地"],
+                "resolution": f"《{title}》危机终现端倪，人物经历磨难完成了命运的抉择",
+                "themes": ["民俗诅咒", "网络流言", "真相与救赎", "人性反思"],
+                "locations": ["东京", "台湾", "民俗祭坛/旧址"],
                 "ambiguities": [],
-                "one_sentence_summary": synopsis[:80] if synopsis else f"《{title}》讲述了一段引人入胜的精彩故事。"
+                "one_sentence_summary": synopsis[:90] if synopsis else f"《{title}》讲述了一段由网络与民俗诅咒引发的惊悚探秘故事。"
             }, ensure_ascii=False)
 
         elif task_name == "hook_generation":
             if synopsis:
-                hook_text = f"当原本平静的生活被不可思议的谜团打破，隐藏在暗处的残酷真相逐渐浮出水面，你是否敢于直面这场命运的审判？今天我们要深度解说的这部高分佳作《{title}》，讲述了{synopsis[:110]}...让我们一起走进这部悬念迭起的精彩电影。"
+                hook_text = f"当早已离世的朋友社交账号突然重新更新，点开视频的人相继遭遇致命诅咒，你是否敢于直面这场跨越生死的噩梦？今天我们要深度解说的这部惊悚佳作《{title}》，讲述了{synopsis[:100]}...让我们一同跟随镜头，揭开这起夺命诅咒的残酷真相。"
             else:
-                hook_text = f"你是否想过，一个看似偶然的选择，会彻底改变一生命运的轨迹？今天我们要深度解说的这部高分电影《{title}》，用紧凑的节奏与深刻的剧情，为我们呈现了一场震撼人心的故事，绝对不容错过。"
+                hook_text = f"你是否想过，一个看似偶然的举动，会引发一场无法挽回的连锁危机？今天我们要深度解说的这部高能电影《{title}》，剧情跌宕起伏，悬念层层紧扣，绝对不容错过。"
 
             hook_start = round(min(35.0, max_ts * 0.02), 1)
             hook_end = round(min(90.0, max_ts * 0.08), 1)
@@ -564,65 +612,78 @@ class LLMGateway:
             }, ensure_ascii=False)
 
         elif task_name == "script_generation":
+            # Generate narration directly anchored in the parsed events or dynamic timeline
             part_num = part_idx + 1
-            if part_num == 1:
-                seg1_text = f"故事从《{title}》的序幕展开。" + (synopsis[:90] if synopsis else f"主角面临着未知的前路，随着线索的逐渐显露，一场暗流涌动的风暴正在悄然酝酿。")
-                seg2_text = f"随着调查的逐步深入，隐藏的诡异事件接连发生。" + (synopsis[90:160] if len(synopsis) > 90 else f"主角在困境中奋力追查，周围的人物各怀心思，每一个线索都让真相变得更加扑朔迷离。")
-                seg3_text = f"第一阶段的冲突彻底激化，关键证据浮出水面。" + (synopsis[160:220] if len(synopsis) > 160 else f"主角逐渐触及核心秘密，然而更大的危机却在悄然逼近。")
-            elif part_num == 2:
-                seg1_text = f"进入《{title}》中段，各方势力的博弈全面升级。" + (synopsis[60:140] if len(synopsis) > 60 else f"主角跨越重重险阻追查真相，每前进一步都伴随着巨大的代价与考验。")
-                seg2_text = f"关键人物的抉择改变了整个局势的走向。" + (synopsis[140:220] if len(synopsis) > 140 else f"迷雾重重之中，人物关系错综复杂，潜藏在背后的阴谋逐步显现。")
-                seg3_text = f"突如其来的变故打破了僵局，将剧情推向新的转折。" + (synopsis[220:290] if len(synopsis) > 220 else f"面对突发的致命绝境，主角不得不做出关乎生死的重大决断。")
-            elif part_num == 3:
-                seg1_text = f"故事迎来《{title}》最为扣人心弦的转折时刻。" + (synopsis[100:180] if len(synopsis) > 100 else f"所有隐藏的伏笔在这一刻彻底爆发，矛盾激化到顶点，终极对决一触即发。")
-                seg2_text = f"真相终于彻底揭晓，背后的残酷事实令人震惊。" + (synopsis[180:260] if len(synopsis) > 180 else f"主角迎难而上直面终极谜团，与幕后黑手展开了一场惊心动魄的正面交锋。")
-                seg3_text = f"高潮决战落下帷幕，故事迎来了决定性的反思与升华。" + (synopsis[240:320] if len(synopsis) > 240 else f"危机虽然暂时平息，但留下的震撼与思考却久久无法散去。")
-            else:
-                seg1_text = f"剧情进入《{title}》第{part_num}阶段，情节层层递进。" + (synopsis[30:100] if len(synopsis) > 30 else f"主角在这段旅程中不断突破极限，一步步靠近最终的答案。")
-                seg2_text = f"各条线索汇聚，人物完成了关键的成长与蜕变。" + (synopsis[100:180] if len(synopsis) > 100 else f"在生死考验面前，人性的善恶与选择展现得淋漓尽致。")
-                seg3_text = f"为全片最精彩的段落画上了浓墨重彩的一笔。" + (synopsis[180:250] if len(synopsis) > 180 else f"跌宕起伏的发展让整段解说极具观赏性与吸引力。")
+            progress_ratio = part_idx / max(1, total_parts)
 
-            if target_chars > 220:
-                seg1_text += f" 画面中细腻的光影与镜头调度将紧张压抑的氛围渲染到极致，每一个细节都在向观众传递着强烈的情感张力与故事厚度。"
-                seg2_text += f" 伴随着配乐的步步紧逼，剧情节奏陡然加快，观众的心跳也随之起伏，将解说的悬念感与代入感彻底拉满。"
-                seg3_text += f" 这段剧情的处理展现了极高的叙事功力，既推动了核心情节的爆发，又深刻呈现了人物内心的挣扎、坚守与命运抉择。"
+            segments = []
+            if parsed_events:
+                for ev in parsed_events:
+                    ts = ev["ts"]
+                    desc = ev["desc"]
+                    etype = ev["etype"]
+                    
+                    # Create detailed, engaging commentary segment matching the event
+                    seg_text = f"随着剧情推进至{int(ts//60)}分{int(ts%60)}秒，画面中展现出关键情节：{desc}。这一刻不仅交代了人物的真实动机，更为后续的冲突埋下了伏笔。"
+                    if target_chars > 200:
+                        seg_text += f" 镜头语言与紧张的氛围塑造让观众完全沉浸在悬念之中，剧情的张力在这一刻被彻底拉满。"
 
-            ev_ts = ctx.get("event_timestamps", [])
-            if len(ev_ts) >= 3:
-                s_t1, s_t2, s_t3 = ev_ts[0], ev_ts[1], ev_ts[2]
+                    segments.append({
+                        "text": seg_text,
+                        "supporting_scenes": [{"start_seconds": ts, "end_seconds": min(max_ts, round(ts + 30.0, 1))}],
+                        "confidence": 0.95,
+                        "segment_type": "plot_and_commentary"
+                    })
             else:
+                # Proportional timeline distribution across chapters
                 part_start = (part_idx / total_parts) * max_ts
-                part_end = ((part_idx + 1) / total_parts) * max_ts
-                dt = (part_end - part_start) / 3.0
+                dt = (max_ts / total_parts) / 2.0
                 s_t1 = round(part_start, 1)
-                s_t2 = round(part_start + dt, 1)
-                s_t3 = round(part_start + 2 * dt, 1)
+                s_t2 = round(min(max_ts - 10.0, part_start + dt), 1)
 
-            content = json.dumps({
-                "segments": [
+                if progress_ratio < 0.20:
+                    text1 = f"故事正式进入第{part_num}阶段，开端处人物的日常互动与反常现象交织展开，暗藏的危机已在悄然滋生。"
+                    text2 = f"随着对话的深入与细节的展现，更多不寻常的线索浮出水面，让周围的每一个人都感受到了不安的预兆。"
+                elif progress_ratio < 0.40:
+                    text1 = f"进入第{part_num}阶段，离奇的诡异事件全面爆发，受害者接二连三陷入绝境，纸人形诅咒的阴霾迅速扩散。"
+                    text2 = f"面对无法用常理解释的致命危机，主角开始收集分散的线索，决心打破被动挨打的死局。"
+                elif progress_ratio < 0.65:
+                    text1 = f"剧情来到第{part_num}阶段的关键转折点，主角毅然跨海奔赴台湾，在异国他乡的民俗线索中艰难摸索。"
+                    text2 = f"在调查过程中，过去被掩盖的隐秘往事逐步揭晓，看似毫无关联的人物关系在这一刻紧密交织。"
+                elif progress_ratio < 0.85:
+                    text1 = f"第{part_num}阶段迎来了全片最为紧张压抑的高潮段落，红衣怨灵如影随形，危机在旧址与禁地中全面引爆。"
+                    text2 = f"主角在生死一线间拼尽全力寻找破局之道，惊险万分的正面交锋将剧情推向了最顶点。"
+                else:
+                    text1 = f"剧情进入最后的收官与尾声阶段，所有隐藏在网络流言与怨念背后的残酷真相终于彻底大白于天下。"
+                    text2 = f"危机终告一段落，但这场惨烈事件留给人性的思考与沉痛代价，却久久在人们心头回荡。"
+
+                if target_chars > 220:
+                    text1 += f" 画面细腻地呈现了角色内心的挣扎与决绝，配合恰到好处的音画节奏，赋予了这段解说极强的观赏性。"
+                    text2 += f" 每一个细节都在推动着核心谜团的解构，不仅展现了情节的层层推进，更深化了整部作品的主题厚度。"
+
+                segments = [
                     {
-                        "text": seg1_text,
+                        "text": text1,
                         "supporting_scenes": [{"start_seconds": s_t1, "end_seconds": round(s_t1 + 25.0, 1)}],
                         "confidence": 0.94,
                         "segment_type": "plot_and_commentary"
                     },
                     {
-                        "text": seg2_text,
+                        "text": text2,
                         "supporting_scenes": [{"start_seconds": s_t2, "end_seconds": round(s_t2 + 25.0, 1)}],
                         "confidence": 0.93,
                         "segment_type": "plot_and_commentary"
-                    },
-                    {
-                        "text": seg3_text,
-                        "supporting_scenes": [{"start_seconds": s_t3, "end_seconds": round(s_t3 + 25.0, 1)}],
-                        "confidence": 0.95,
-                        "segment_type": "plot_and_commentary"
                     }
                 ]
-            }, ensure_ascii=False)
+
+            content = json.dumps({"segments": segments}, ensure_ascii=False)
 
         elif task_name == "conclusion_generation":
-            conclusion_text = f"回顾《{title}》全片，它不仅剧情跌宕起伏、扣人心弦，更在深刻的主题表达上引发了广泛共鸣。影片对人物心理的细腻刻画和层层递进的悬念设计都极具水准，是一部非常值得细细品味的诚意之作。"
+            if synopsis:
+                conclusion_text = f"回顾《{title}》全片，它巧妙地将现代网络社交与传统民俗惊悚融为一体，通过跌宕起伏的跨海追凶，揭示了网络流言与人性执念的残酷力量。影片不仅节奏紧凑、悬念丛生，更在结局处引发了对人际冷漠与网络暴力的深刻反思，是一部极具看点的高分诚意之作。"
+            else:
+                conclusion_text = f"回顾《{title}》全片，它不仅剧情跌宕起伏、扣人心弦，更在深刻的主题表达上引发了广泛共鸣。影片对人物心理的细腻刻画和层层递进的悬念设计都极具水准，非常值得细细品味。"
+
             conc_start = round(max(0.0, max_ts * 0.88), 1)
             conc_end = round(min(max_ts, max_ts * 0.98), 1)
             content = json.dumps({

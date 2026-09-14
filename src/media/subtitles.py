@@ -1,9 +1,11 @@
-"""Subtitle parsing utilities."""
+"""Subtitle parsing and ASR transcription utilities (FR-2 / FR-3)."""
 from __future__ import annotations
-import re
+import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List
+from typing import List, Optional
+
+logger = logging.getLogger(__name__)
 
 @dataclass
 class SubtitleEntry:
@@ -92,3 +94,76 @@ def search_subtitles(entries: List[SubtitleEntry], query: str) -> List[SubtitleE
 def get_subtitles_in_range(entries: List[SubtitleEntry], start: float, end: float) -> List[SubtitleEntry]:
     """Get subtitles within a time range."""
     return [entry for entry in entries if entry.start_seconds >= start and entry.start_seconds <= end]
+
+
+def transcribe_audio_to_srt(
+    audio_path: Path,
+    output_srt: Path,
+    model_size: str = "base",
+    language: Optional[str] = None,
+) -> List[SubtitleEntry]:
+    """
+    Transcribe audio track using faster-whisper to generate timestamped subtitles.
+
+    Args:
+        audio_path: Path to source audio file (WAV or MP3).
+        output_srt: Output path for generated .srt file.
+        model_size: Whisper model size ('tiny', 'base', 'small', 'medium').
+        language: Optional language code (e.g. 'zh', 'ja', 'en').
+
+    Returns:
+        List of SubtitleEntry objects.
+    """
+    from src.utils.timing import seconds_to_srt_time
+
+    output_srt.parent.mkdir(parents=True, exist_ok=True)
+    logger.info("Transcribing audio %s with faster-whisper (model=%s)...", audio_path, model_size)
+
+    try:
+        from faster_whisper import WhisperModel
+        model = WhisperModel(model_size, device="cpu", compute_type="int8")
+        segments_gen, info = model.transcribe(
+            str(audio_path),
+            language=language,
+            beam_size=5,
+            vad_filter=True,
+            vad_parameters=dict(min_silence_duration_ms=500),
+        )
+
+        entries: list[SubtitleEntry] = []
+        srt_lines: list[str] = []
+
+        for idx, seg in enumerate(segments_gen, start=1):
+            text = seg.text.strip()
+            if not text:
+                continue
+            entry = SubtitleEntry(
+                index=idx,
+                start_seconds=float(seg.start),
+                end_seconds=float(seg.end),
+                text=text,
+            )
+            entries.append(entry)
+
+            start_str = seconds_to_srt_time(entry.start_seconds)
+            end_str = seconds_to_srt_time(entry.end_seconds)
+            srt_lines.append(str(idx))
+            srt_lines.append(f"{start_str} --> {end_str}")
+            srt_lines.append(text)
+            srt_lines.append("")
+
+        output_srt.write_text("\n".join(srt_lines), encoding="utf-8")
+        logger.info(
+            "Transcription complete: %d subtitle entries extracted across %s (detected lang=%s, prob=%.2f)",
+            len(entries),
+            audio_path,
+            info.language,
+            info.language_probability,
+        )
+        return entries
+
+    except Exception as e:
+        logger.warning("faster-whisper transcription failed (%s). Generating fallback empty subtitles.", e)
+        output_srt.write_text("", encoding="utf-8")
+        return []
+

@@ -20,7 +20,7 @@ from src.media.audio import extract_audio
 from src.media.frames import extract_scene_keyframes
 from src.media.probe import extract_media_info
 from src.media.scene_detect import detect_scenes
-from src.media.subtitles import parse_srt
+from src.media.subtitles import parse_srt, transcribe_audio_to_srt
 
 logger = logging.getLogger(__name__)
 
@@ -186,12 +186,14 @@ def run_stage_analyze(
 
     keyframe_paths = sorted(keyframes_dir.glob("*.jpg"))
 
-    # 4. Parse Subtitles if present
+    # 4. Parse or Transcribe Subtitles / Audio Dialogues (DETERMINISTIC ASR)
     subtitles_path = None
     subtitles_file = stage_dir / "subtitles.json"
     srt_candidates = list(stage1_dir.glob("*.srt")) + list(stage_dir.glob("*.srt"))
     subtitle_entries: list[dict] = []
+    
     if srt_candidates:
+        logger.info("Found existing subtitle file %s...", srt_candidates[0])
         subtitles = parse_srt(srt_candidates[0])
         subtitle_entries = [
             {"index": s.index, "start": s.start_seconds, "end": s.end_seconds, "text": s.text}
@@ -201,15 +203,33 @@ def run_stage_analyze(
             json.dumps(subtitle_entries, indent=2, ensure_ascii=False), encoding="utf-8"
         )
         subtitles_path = subtitles_file
-    elif subtitles_file.exists():
+    elif subtitles_file.exists() and not force:
         subtitle_entries = json.loads(subtitles_file.read_text(encoding="utf-8"))
+        subtitles_path = subtitles_file
+    else:
+        # Transcribe audio track to generate precise dialogue timestamps
+        logger.info("Transcribing audio dialogue for scene grounding via faster-whisper...")
+        out_srt = stage_dir / "subtitles.srt"
+        subs = transcribe_audio_to_srt(audio_path, out_srt, model_size="base")
+        subtitle_entries = [
+            {"index": s.index, "start": s.start_seconds, "end": s.end_seconds, "text": s.text}
+            for s in subs
+        ]
+        subtitles_file.write_text(
+            json.dumps(subtitle_entries, indent=2, ensure_ascii=False), encoding="utf-8"
+        )
         subtitles_path = subtitles_file
 
     # 5. Build Scene Index
     scenes = []
     for i, (start, end) in enumerate(scene_boundaries):
-        scene_subs = [s for s in subtitle_entries if s["start"] < end and s["end"] > start]
-        transcript = " ".join(s["text"] for s in scene_subs)
+        scene_subs = [
+            s for s in subtitle_entries
+            if (start <= s["start"] < end)
+            or (start <= (s["start"] + s["end"]) / 2.0 < end)
+            or (s["start"] <= start and s["end"] >= end and (s["end"] - s["start"]) <= 20.0)
+        ]
+        transcript = " ".join(s["text"] for s in scene_subs).strip()
         kf_list = sorted(keyframes_dir.glob(f"scene_{i:04d}_*.jpg"))
 
         scenes.append({

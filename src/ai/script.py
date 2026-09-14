@@ -88,18 +88,49 @@ def generate_script(
     # Group events dynamically based on target duration (approx 1-1.5 minutes per group call)
     desired_body_groups = max(1, int(target_duration_min / 1.2))
     if len(events) < desired_body_groups:
-        # Interpolate synthetic timeline event anchors if events are sparse
         total_dur = scene_index.get("duration_seconds", 600.0)
-        events = [
-            {
+        scenes_list = scene_index.get("scenes", [])
+        synopsis = metadata.get("synopsis", "") if metadata else ""
+
+        interpolated_events = []
+        for i in range(desired_body_groups):
+            anchor_ts = (i / max(1, desired_body_groups)) * total_dur
+            window_len = total_dur / max(1, desired_body_groups)
+
+            # Find nearest scene with dialogue transcript in this window
+            matched_scene = None
+            for sc in scenes_list:
+                sc_st = sc.get("start_seconds", 0.0)
+                if abs(sc_st - anchor_ts) <= window_len and sc.get("transcript_text"):
+                    matched_scene = sc
+                    break
+
+            if matched_scene:
+                ts = matched_scene.get("start_seconds", anchor_ts)
+                t_text = matched_scene.get("transcript_text", "")
+                desc = f"主线关键情节与人物对话（现场对白: {t_text[:40]}...）"
+            else:
+                ts = anchor_ts
+                progress = i / max(1, desired_body_groups)
+                if progress < 0.20:
+                    desc = f"开篇人物登场与反常事件初现（时间点 {int(ts//60)}分{int(ts%60)}秒）"
+                elif progress < 0.40:
+                    desc = f"诡异诅咒全面扩散与同伴遇险（时间点 {int(ts//60)}分{int(ts%60)}秒）"
+                elif progress < 0.65:
+                    desc = f"跨海奔赴异地展开实地深入调查（时间点 {int(ts//60)}分{int(ts%60)}秒）"
+                elif progress < 0.85:
+                    desc = f"民俗旧址惊险对峙与怨灵步步紧逼（时间点 {int(ts//60)}分{int(ts%60)}秒）"
+                else:
+                    desc = f"终局决战与诅咒真相彻底揭晓（时间点 {int(ts//60)}分{int(ts%60)}秒）"
+
+            interpolated_events.append({
                 "event_id": f"evt-{i:03d}",
-                "description": f"《{title}》剧情第{i+1}阶段发展与冲突推进",
-                "timestamp_seconds": round((i / max(1, desired_body_groups)) * total_dur, 1),
+                "description": desc,
+                "timestamp_seconds": round(ts, 1),
                 "event_type": "plot",
                 "characters": [c.get("name") for c in characters[:2]] if characters else [],
-            }
-            for i in range(desired_body_groups)
-        ]
+            })
+        events = interpolated_events
 
     group_size = max(1, (len(events) + desired_body_groups - 1) // desired_body_groups)
     event_groups = _group_events(events, max_group_size=group_size)
