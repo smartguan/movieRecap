@@ -160,6 +160,38 @@ def test_video_grounded_script_synthesis_and_continuity():
     assert cont_dim.passed is True
 
 
+def test_video_grounded_script_zero_meta_commentary():
+    """Verify that synthesized commentary contains zero ungrounded meta-commentary or fourth-wall breaks."""
+    from src.eval.cliches import scan_for_meta_commentary
+
+    sequences = [
+        NarrativeSequence(
+            sequence_id=f"seq-{i}",
+            sequence_index=i,
+            start_seconds=float(i * 300),
+            end_seconds=float(i * 300 + 60),
+            duration_seconds=60.0,
+            transcript_text=f"调查证据线索第{i}幕",
+            characters=["女主"],
+            event_type="setup" if i == 0 else ("climax" if i == 4 else "investigation"),
+        )
+        for i in range(5)
+    ]
+
+    synthesizer = VideoGroundedScriptSynthesizer()
+    segments = synthesizer.synthesize_script(
+        title="诅咒",
+        synopsis="女主调查好友离奇死亡诅咒的悬疑恐怖故事",
+        cast=["女主", "同伴"],
+        genre="惊悚",
+        selected_sequences=sequences,
+    )
+
+    full_text = "".join(seg["text"] for seg in segments)
+    meta_matches = scan_for_meta_commentary(full_text)
+    assert meta_matches == [], f"Found ungrounded meta-commentary: {meta_matches}"
+
+
 @patch("src.stages.generate.render_recap_video")
 @patch("src.stages.generate.generate_voice_assets")
 @patch("src.stages.generate.plan_and_extract_clips")
