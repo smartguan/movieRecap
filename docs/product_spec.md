@@ -1,10 +1,10 @@
 # Movie Commentary Autopilot
 
 **Product Requirements Document (PRD)**  
-**Version:** 0.6  
+**Version:** 0.7  
 **Date:** September 14, 2026  
 **Status:** Active  
-**ADR References:** [ADR 0004: Audio-Visual Semantic Alignment](docs/adr/0004_audio_visual_semantic_alignment.md) (Superseded), [ADR 0005: Content-Grounded Scene Selection](docs/adr/0005_content_grounded_scene_selection.md), [ADR 0006: V3 Video-First Narrative Spine Engine](docs/adr/0006_v3_video_first_narrative_spine.md), [ADR 0007: Generic Audio-Visual Semantic Grounding](docs/adr/0007_grounded_av_semantic_fidelity.md), [ADR 0008: Dialogue-Driven Sequence Selection & Anti-Slop Evaluation](docs/adr/0008_dialogue_driven_sequence_selection_and_anti_slop_eval.md)  
+**ADR References:** [ADR 0004: Audio-Visual Semantic Alignment](docs/adr/0004_audio_visual_semantic_alignment.md) (Superseded), [ADR 0005: Content-Grounded Scene Selection](docs/adr/0005_content_grounded_scene_selection.md), [ADR 0006: V3 Video-First Narrative Spine Engine](docs/adr/0006_v3_video_first_narrative_spine.md), [ADR 0007: Generic Audio-Visual Semantic Grounding](docs/adr/0007_grounded_av_semantic_fidelity.md), [ADR 0008: Dialogue-Driven Sequence Selection & Anti-Slop Evaluation](docs/adr/0008_dialogue_driven_sequence_selection_and_anti_slop_eval.md), [ADR 0009: Clip-by-Clip Audio & Video Consistency Evaluation Engine](docs/adr/0009_clip_by_clip_consistency_evaluation.md)  
 
 ## 1. Executive summary
 
@@ -530,6 +530,16 @@ Initial thresholds should be configurable and refined through the pilot.
 | YouTube copyright/restriction concern | Hold for explicit human review |
 | Video changed after approval | Invalidate approval |
 | Publication API failure | Keep private and notify; never repeatedly force public state |
+
+### 11.1 Clip-by-Clip Audio-Visual Consistency Verification (ADR 0009)
+
+To ensure that macro quality metrics do not mask micro-level audio/video desynchronization or activity contradictions, the evaluation engine enforces an exhaustive, deterministic clip-by-clip audit across all edit decisions:
+
+1. **Windowed Subtitle Extraction**: For every clip, source dialogues within `[source_start, source_end]` are extracted from `subtitles.json` / `scene_index.json`.
+2. **Activity Conflict Audit**: Compares voiceover claims against on-screen dialogue/actions using generic mutually exclusive rules (`ACTIVITY_DOMAINS`), while respecting transition clauses.
+3. **Dialogue Semantic Correlation**: Computes affinity scores between spoken dialogue and narration text, ensuring narrative grounding.
+4. **Drift & Monotonicity Gates**: Detects timeline regressions ($> 45$s) and duration drift ($> 1.0$s).
+5. **Automated Audit Table**: Formats and embeds a full clip-by-clip Markdown table in `recap_quality_report.md` and exports `clip_verification.json` for pipeline telemetry.
 
 ## 12. Success metrics
 

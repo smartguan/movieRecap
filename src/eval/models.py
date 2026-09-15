@@ -61,6 +61,35 @@ class StoryContinuityMetrics(BaseModel):
     details: str = "Narrative flow is strictly chronological and smoothly transitioned"
 
 
+class ClipVerificationResult(BaseModel):
+    clip_index: int
+    segment_id: str = ""
+    recap_timeline: str = ""
+    source_movie_window: str = ""
+    source_start: float = 0.0
+    source_end: float = 0.0
+    duration: float = 0.0
+    narration_text: str = ""
+    video_subtitles: str = ""
+    video_activity: str = ""
+    audio_activity: str = ""
+    semantic_match_score: float = Field(100.0, ge=0.0, le=100.0)
+    passed: bool = True
+    findings: list[str] = Field(default_factory=list)
+    verdict_details: str = "Consistent"
+
+
+class ClipByClipReport(BaseModel):
+    total_clips: int = 0
+    passed_clips: int = 0
+    failed_clips: int = 0
+    clip_pass_rate: float = Field(100.0, ge=0.0, le=100.0)
+    average_semantic_score: float = Field(100.0, ge=0.0, le=100.0)
+    clip_results: list[ClipVerificationResult] = Field(default_factory=list)
+    discrepancies: list[str] = Field(default_factory=list)
+    formatted_table_markdown: str = ""
+
+
 class DeterministicMetrics(BaseModel):
     cleanliness_score: float = Field(100.0, ge=0.0, le=100.0)
     movie_identity_pass: bool = True
@@ -76,6 +105,7 @@ class DeterministicMetrics(BaseModel):
     hard_failures: list[str] = Field(default_factory=list)
     av_coupling: AudioVideoCouplingMetrics = Field(default_factory=AudioVideoCouplingMetrics)
     continuity: StoryContinuityMetrics = Field(default_factory=StoryContinuityMetrics)
+    clip_verification: ClipByClipReport = Field(default_factory=ClipByClipReport)
 
 
 class SemanticMetrics(BaseModel):
@@ -103,4 +133,6 @@ class AntiSlopReport(BaseModel):
     total_eval_tokens: int = 0
     total_eval_cost_usd: float = 0.0
     deterministic_savings_description: str = "Deterministic evaluators executed with 0 LLM tokens"
+    clip_verification: ClipByClipReport = Field(default_factory=ClipByClipReport)
     timestamp: str
+

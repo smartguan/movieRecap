@@ -52,9 +52,11 @@ def main() -> None:
             sys.exit(1)
         # Sort by updated_at descending
         projects.sort(key=lambda p: p.get("updated_at", ""), reverse=True)
-        project_id = projects[0]["project_id"]
+    if Path(project_id).exists() and (Path(project_id) / "script.json").exists():
+        project_dir = Path(project_id)
+    else:
+        project_dir = manager.get_project_dir(project_id)
 
-    project_dir = manager.get_project_dir(project_id)
     if not (project_dir / "script.json").exists():
         print(f"Error: Project {project_id} has no script.json", file=sys.stderr)
         sys.exit(1)

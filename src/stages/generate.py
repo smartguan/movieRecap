@@ -285,6 +285,9 @@ def run_stage_generate(
 
     total_audio_dur = sum(float(d.get("duration", 0.0)) for d in edit_decisions)
 
+    subs_file = stage2_dir / "subtitles.json"
+    subs_list = json.loads(subs_file.read_text(encoding="utf-8")) if subs_file.exists() else None
+
     # 7. Anti-Slop QA Scorecard Evaluation
     detector = SlopDetector(config=config)
     qa_report = detector.evaluate_script(
@@ -293,12 +296,21 @@ def run_stage_generate(
         scene_index=scene_index_dict,
         edit_decisions=[d.model_dump() if hasattr(d, "model_dump") else d for d in edit_decisions],
         timeline_audio_duration=total_audio_dur,
+        subtitles=subs_list,
     )
     try:
         report_json = qa_report.model_dump_json(indent=2) if hasattr(qa_report, "model_dump_json") else json.dumps(qa_report, ensure_ascii=False)
     except Exception:
         report_json = json.dumps({"score": getattr(qa_report, "total_score", 0.0)}, ensure_ascii=False)
     (stage_work_dir / "recap_quality_report.json").write_text(str(report_json), encoding="utf-8")
+
+    if hasattr(qa_report, "clip_verification") and qa_report.clip_verification:
+        try:
+            (stage_work_dir / "clip_verification.json").write_text(
+                qa_report.clip_verification.model_dump_json(indent=2), encoding="utf-8"
+            )
+        except Exception:
+            pass
 
     try:
         report_md = detector.format_markdown_report(qa_report)

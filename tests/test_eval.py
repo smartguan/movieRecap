@@ -634,6 +634,112 @@ def test_offline_eval_detects_slop_boilerplate():
     assert report.semantic.commentary_depth_score < 60.0
 
 
+def test_clip_verifier_subtitles_extraction():
+    """Test extracting subtitles that overlap with clip time windows."""
+    from src.eval.clip_verifier import extract_subtitles_for_window
+
+    subtitles = [
+        {"start": 10.0, "end": 20.0, "text": "First line"},
+        {"start": 25.0, "end": 35.0, "text": "Second line"},
+        {"start": 40.0, "end": 50.0, "text": "Third line"},
+    ]
+    extracted = extract_subtitles_for_window(subtitles, None, 15.0, 30.0)
+    assert "First line" in extracted
+    assert "Second line" in extracted
+    assert "Third line" not in extracted
+
+
+def test_clip_verifier_activity_conflict():
+    """Test that a clip asserting salon haircut over cooking video fails consistency."""
+    from src.eval.clip_verifier import verify_single_clip
+
+    decision = {
+        "segment_id": "clip-001",
+        "source_start": 100.0,
+        "source_end": 130.0,
+        "duration": 30.0,
+        "text": "理发师在发廊里精巧地修剪着发丝，为顾客量身设计时尚的新发型。",
+    }
+    subtitles = [
+        {"start": 105.0, "end": 125.0, "text": "ご飯ができたよ、いただきます！おいしい！"},
+    ]
+
+    result = verify_single_clip(
+        clip_index=1,
+        decision=decision,
+        subtitles=subtitles,
+    )
+    assert result.passed is False
+    assert any("Cross-modal activity conflict" in f for f in result.findings)
+    assert "salon_haircut" in result.findings[0]
+    assert "dining_cooking" in result.findings[0]
+
+
+def test_clip_verifier_matching_clip():
+    """Test that a clip with matching dialogue and activity passes consistency."""
+    from src.eval.clip_verifier import verify_single_clip
+
+    decision = {
+        "segment_id": "clip-002",
+        "source_start": 300.0,
+        "source_end": 330.0,
+        "duration": 30.0,
+        "text": "温馨的晚餐时光，两人在厨房精心下厨烹饪，餐桌上弥漫着家常便饭的热气。",
+    }
+    subtitles = [
+        {"start": 305.0, "end": 325.0, "text": "サイコーンでしょ食べる！おいしい！"},
+    ]
+
+    result = verify_single_clip(
+        clip_index=2,
+        decision=decision,
+        subtitles=subtitles,
+    )
+    assert result.passed is True
+    assert len(result.findings) == 0
+    assert result.semantic_match_score >= 80.0
+
+
+def test_clip_verifier_all_clips_report():
+    """Test verifying all clips and formatting markdown audit table."""
+    from src.eval.clip_verifier import verify_all_clips
+
+    decisions = [
+        {
+            "segment_id": "narration-000",
+            "source_start": 10.0,
+            "source_end": 30.0,
+            "duration": 20.0,
+            "timeline_start": 0.0,
+            "timeline_end": 20.0,
+            "text": "理发师在发廊为客人剪发。",
+        },
+        {
+            "segment_id": "narration-001",
+            "source_start": 50.0,
+            "source_end": 80.0,
+            "duration": 30.0,
+            "timeline_start": 20.0,
+            "timeline_end": 50.0,
+            "text": "晚上回到家下厨做饭吃饭。",
+        },
+    ]
+    subtitles = [
+        {"start": 12.0, "end": 25.0, "text": "カットとカラーでお願いします。"},
+        {"start": 55.0, "end": 75.0, "text": "いただきます！サイコーン！"},
+    ]
+
+    report = verify_all_clips(edit_decisions=decisions, subtitles=subtitles)
+    assert report.total_clips == 2
+    assert report.passed_clips == 2
+    assert report.clip_pass_rate == 100.0
+    assert len(report.discrepancies) == 0
+    assert "| **00** |" in report.formatted_table_markdown
+    assert "| **01** |" in report.formatted_table_markdown
+    assert "Recap Timeline" in report.formatted_table_markdown
+
+
+
 
 
 

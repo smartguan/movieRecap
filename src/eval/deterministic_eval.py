@@ -143,7 +143,7 @@ def check_av_semantic_alignment(
         for t_dom in text_domains:
             conflicting_doms = ACTIVITY_DOMAINS[t_dom]["conflicts_with"]
             for s_dom in scene_domains:
-                if s_dom in conflicting_doms and t_dom not in scene_domains:
+                if s_dom in conflicting_doms and s_dom not in text_domains:
                     total_checks += 1
                     mismatches += 1
                     findings.append(
@@ -464,6 +464,7 @@ def evaluate_deterministic(
     scene_index: dict[str, Any] | None = None,
     edit_decisions: list[dict[str, Any]] | None = None,
     timeline_audio_duration: float | None = None,
+    subtitles: list[dict[str, Any]] | None = None,
 ) -> tuple[DeterministicMetrics, list[DimensionScore], EvaluatorTelemetry]:
 
     """
@@ -475,6 +476,7 @@ def evaluate_deterministic(
         scene_index: Scene index with extracted scene timestamps.
         edit_decisions: Edit decisions with video clip & audio alignment info.
         timeline_audio_duration: Actual rendered narration audio duration in seconds.
+        subtitles: Raw subtitle lines from subtitles.json.
 
     Returns:
         Tuple of (DeterministicMetrics, list of DimensionScore, EvaluatorTelemetry).
@@ -753,6 +755,18 @@ def evaluate_deterministic(
     if scene_content_match_score < 40.0:
         coupling_score -= min(25.0, (40.0 - scene_content_match_score) * 0.5)
 
+    from src.eval.clip_verifier import verify_all_clips
+    clip_report = verify_all_clips(
+        edit_decisions=edit_decisions or [],
+        subtitles=subtitles,
+        scene_index=scene_index,
+        story=story,
+        total_source_duration=tot_src_dur,
+    )
+
+    if clip_report.failed_clips > 0:
+        coupling_score = max(0.0, coupling_score - min(30.0, (100.0 - clip_report.clip_pass_rate) * 0.5))
+
     coupling_score = max(0.0, round(coupling_score, 1))
 
     coupling_findings = []
@@ -767,6 +781,8 @@ def evaluate_deterministic(
     if scene_content_match_score < 60.0 and edit_decisions:
         coupling_findings.append(f"Low visual scene content match score: {scene_content_match_score:.1f}/100 ({len(low_match_segments)} clips with low correlation)")
     coupling_findings.extend(phase_findings)
+    if clip_report.discrepancies:
+        coupling_findings.extend(clip_report.discrepancies[:5])
 
     av_coupling_metrics = AudioVideoCouplingMetrics(
         av_duration_drift_seconds=round(total_drift, 3),
@@ -778,14 +794,14 @@ def evaluate_deterministic(
         low_match_segments=low_match_segments,
         phase_mismatch_count=phase_mismatches,
         coupling_score=coupling_score,
-        details=f"AV Semantic Alignment={av_sem_score:.1f}%, Content Match={scene_content_match_score:.1f}%, Drift={total_drift:.2f}s, Visual Grounding={char_alignment_ratio * 100:.1f}%, Timeline Coverage={timeline_coverage_ratio * 100:.1f}%, Loops={duplicate_clip_loops}",
+        details=f"AV Semantic Alignment={av_sem_score:.1f}%, Content Match={scene_content_match_score:.1f}%, Drift={total_drift:.2f}s, Visual Grounding={char_alignment_ratio * 100:.1f}%, Timeline Coverage={timeline_coverage_ratio * 100:.1f}%, Loops={duplicate_clip_loops}, Clip Pass Rate={clip_report.clip_pass_rate:.1f}%",
     )
 
     av_coupling_dim = DimensionScore(
         name="Cross-Modal Audio-Visual Coupling",
         score=coupling_score,
         weight=0.15,
-        passed=coupling_score >= 70.0 and duplicate_clip_loops == 0 and phase_mismatches == 0,
+        passed=coupling_score >= 70.0 and duplicate_clip_loops == 0 and phase_mismatches == 0 and clip_report.clip_pass_rate >= 80.0,
         details=av_coupling_metrics.details,
         findings=coupling_findings,
     )
@@ -840,6 +856,7 @@ def evaluate_deterministic(
         hard_failures=hard_failures,
         av_coupling=av_coupling_metrics,
         continuity=continuity_metrics,
+        clip_verification=clip_report,
     )
 
     telemetry = EvaluatorTelemetry(

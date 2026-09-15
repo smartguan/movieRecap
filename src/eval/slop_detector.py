@@ -64,6 +64,11 @@ class SlopDetector:
         if not scene_index and stage2_dir.exists() and (stage2_dir / "scene_index.json").exists():
             scene_index = json.loads((stage2_dir / "scene_index.json").read_text(encoding="utf-8"))
 
+        subtitles_file = project_dir / "subtitles.json"
+        subtitles = json.loads(subtitles_file.read_text(encoding="utf-8")) if subtitles_file.exists() else None
+        if not subtitles and stage2_dir.exists() and (stage2_dir / "subtitles.json").exists():
+            subtitles = json.loads((stage2_dir / "subtitles.json").read_text(encoding="utf-8"))
+
         edit_plan_file = project_dir / "edit_plan.json"
         edit_decisions = json.loads(edit_plan_file.read_text(encoding="utf-8")) if edit_plan_file.exists() else []
 
@@ -78,6 +83,7 @@ class SlopDetector:
             scene_index=scene_index,
             edit_decisions=edit_decisions,
             timeline_audio_duration=audio_duration,
+            subtitles=subtitles,
         )
 
     def evaluate_script(
@@ -87,6 +93,7 @@ class SlopDetector:
         scene_index: dict[str, Any] | None = None,
         edit_decisions: list[dict[str, Any]] | None = None,
         timeline_audio_duration: float | None = None,
+        subtitles: list[dict[str, Any]] | None = None,
     ) -> AntiSlopReport:
         """
         Evaluate script content and supporting metadata.
@@ -102,6 +109,7 @@ class SlopDetector:
             scene_index=scene_index,
             edit_decisions=edit_decisions,
             timeline_audio_duration=timeline_audio_duration,
+            subtitles=subtitles,
         )
         eval_telemetry.append(det_telemetry)
 
@@ -201,6 +209,7 @@ class SlopDetector:
             deterministic_savings_description=(
                 f"7 deterministic evaluators (Movie Identity, Cleanliness, Diversity, Evidence, Continuity, AV Coupling, Pacing) executed at 0 tokens ($0.00)"
             ),
+            clip_verification=det_metrics.clip_verification,
             timestamp=datetime.datetime.now(datetime.timezone.utc).isoformat(),
         )
 
@@ -258,6 +267,19 @@ class SlopDetector:
             md.append(
                 f"| **{t.evaluator_name}** | {eval_type} | {t.input_tokens} | {t.output_tokens} | {t.total_tokens} | ${t.cost_usd:.6f} | {t.cache_hit} |"
             )
+
+        if report.clip_verification and report.clip_verification.clip_results:
+            cv = report.clip_verification
+            md.extend([
+                f"",
+                f"## 🔍 Clip-by-Clip Audio & Video Consistency Audit",
+                f"- **Total Clips Evaluated**: `{cv.total_clips}`",
+                f"- **Passed Clips**: `{cv.passed_clips} / {cv.total_clips} ({cv.clip_pass_rate:.1f}%)`",
+                f"- **Average Semantic Match Score**: `{cv.average_semantic_score:.1f} / 100.0`",
+                f"- **Discrepancies / Anomalies**: `{len(cv.discrepancies)}`",
+                f"",
+                cv.formatted_table_markdown,
+            ])
 
         md.extend([
             f"",
