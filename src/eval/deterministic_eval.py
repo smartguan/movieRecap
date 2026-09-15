@@ -17,6 +17,7 @@ from src.eval.cliches import (
     calculate_lexical_diversity,
     find_repeated_phrases,
     scan_for_cliches,
+    scan_for_meta_commentary,
 )
 from src.eval.models import (
     AudioVideoCouplingMetrics,
@@ -563,27 +564,34 @@ def evaluate_deterministic(
     # 2. Lexical Diversity & Cliché Scan (10% weight)
     lex_metrics = calculate_lexical_diversity(full_text)
     cliche_matches = scan_for_cliches(full_text)
+    meta_matches = scan_for_meta_commentary(full_text)
     repeated = find_repeated_phrases(full_text, ngram_size=5, min_count=3)
 
     ttr_score = min(100.0, (lex_metrics["ttr"] / 0.45) * 100.0)
     distinct_score = min(100.0, (lex_metrics["distinct_2"] / 0.90) * 100.0)
     cliche_penalty = min(40.0, len(cliche_matches) * 10.0)
+    meta_penalty = min(50.0, len(meta_matches) * 15.0)
     rep_penalty = min(30.0, len(repeated) * 5.0)
 
-    diversity_score = max(0.0, round((ttr_score * 0.5 + distinct_score * 0.5) - cliche_penalty - rep_penalty, 1))
+    diversity_score = max(0.0, round((ttr_score * 0.5 + distinct_score * 0.5) - cliche_penalty - rep_penalty - meta_penalty, 1))
 
     diversity_findings = []
     if cliche_matches:
         diversity_findings.append(f"Found {len(cliche_matches)} AI clichés: {cliche_matches[:3]}")
+    if meta_matches:
+        diversity_findings.append(f"Found {len(meta_matches)} ungrounded viewer meta-commentaries / film jargon: {meta_matches[:3]}")
     if repeated:
         diversity_findings.append(f"Found {len(repeated)} repeated 5-grams (≥3x): {repeated[:3]}")
+
+    if len(meta_matches) >= 3:
+        hard_failures.append(f"Excessive ungrounded viewer meta-commentary: {len(meta_matches)} occurrences detected (e.g. {meta_matches[:2]})")
 
     diversity_dim = DimensionScore(
         name="Lexical Diversity & Cliché Avoidance",
         score=diversity_score,
         weight=0.08,
-        passed=diversity_score >= 70.0,
-        details=f"TTR={lex_metrics['ttr']:.2f}, Distinct-2={lex_metrics['distinct_2']:.2f}, Clichés={len(cliche_matches)}",
+        passed=diversity_score >= 70.0 and len(meta_matches) < 3,
+        details=f"TTR={lex_metrics['ttr']:.2f}, Distinct-2={lex_metrics['distinct_2']:.2f}, Clichés={len(cliche_matches)}, Meta={len(meta_matches)}",
         findings=diversity_findings,
     )
 
@@ -849,6 +857,7 @@ def evaluate_deterministic(
         distinct_2_grams=lex_metrics["distinct_2"],
         distinct_3_grams=lex_metrics["distinct_3"],
         cliche_matches=cliche_matches,
+        meta_commentary_matches=meta_matches,
         repeated_phrases=repeated,
         speaking_rate_chars_per_min=speaking_rate,
         evidence_grounded_ratio=round(grounded_ratio, 3),

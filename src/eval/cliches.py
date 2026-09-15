@@ -44,6 +44,41 @@ AI_SLOP_CLICHES = [
     r"引发了人们对.+的深思",
 ]
 
+# Ungrounded Viewer Comments & Film-School Meta-Jargon
+UNGROUNDED_META_PATTERNS = [
+    # Audience & Fourth-Wall Directives
+    r"你会选择.+还是.+",
+    r"如果你遇到.+你会.+",
+    r"今天深度解说",
+    r"今天给大家讲述",
+    r"留给观众的",
+    r"让观众(?:感到|体会|沉浸)",
+    r"把观众拉入",
+    r"屏幕前的你",
+    r"各位观众",
+
+    # Film-making & Director Meta-Commentary
+    r"导演巧妙地",
+    r"导演以.+镜头",
+    r"快节奏的蒙太奇",
+    r"蒙太奇(?:手法)?",
+    r"视听交互",
+    r"逼仄的景别",
+    r"生活流镜头",
+    r"镜头缓缓拉开",
+    r"镜头在此处克制",
+    r"摄影机",
+    r"服化道",
+    r"演员的表现",
+
+    # Rhetorical Theatrical Fluff & Moralizing Jargon
+    r"折射出.+微妙距离感",
+    r"谁也没有料到.+暴风雨来临前最后的安宁",
+    r"尖锐地刺破了.+的阴暗角落",
+    r"提升到了对.+的深度探讨",
+    r"迎来命运的终极对抗",
+]
+
 
 def scan_for_cliches(text: str) -> list[str]:
     """
@@ -62,6 +97,27 @@ def scan_for_cliches(text: str) -> list[str]:
             for item in found:
                 matched.append(item if isinstance(item, str) else str(item))
     return matched
+
+
+def scan_for_meta_commentary(text: str) -> list[str]:
+    """
+    Scan Mandarin narration text for ungrounded viewer meta-commentary,
+    fourth-wall breaks, film-school jargon, and rhetorical theatrical fluff.
+
+    Returns:
+        List of matched meta-commentary strings or descriptions.
+    """
+    if not text:
+        return []
+
+    matched = []
+    for pattern in UNGROUNDED_META_PATTERNS:
+        found = re.findall(pattern, text)
+        if found:
+            for item in found:
+                matched.append(item if isinstance(item, str) else str(item))
+    return matched
+
 
 
 def calculate_lexical_diversity(text: str) -> dict[str, float]:

@@ -739,6 +739,47 @@ def test_clip_verifier_all_clips_report():
     assert "Recap Timeline" in report.formatted_table_markdown
 
 
+def test_scan_for_meta_commentary():
+    """Test detecting fourth-wall breaks, film-school jargon, and theatrical meta-filler."""
+    from src.eval.cliches import scan_for_meta_commentary
+
+    meta_text = "回顾全片，导演巧妙地将网络社交与古老民俗融为一体。快节奏的蒙太奇与视听交互交相辉映，留给观众的不仅是后劲。你会选择点开还是当作恶作剧？"
+    matches = scan_for_meta_commentary(meta_text)
+    assert len(matches) >= 4
+
+    grounded_text = "海津雪乃在发廊为客人剪发，随后回到公寓与好友做饭用餐。电话中家豪透露死者半年前暴毙。"
+    clean_matches = scan_for_meta_commentary(grounded_text)
+    assert len(clean_matches) == 0
+
+
+def test_evaluator_flags_excessive_meta_commentary():
+    """Verify that evaluator flags and fails scripts saturated with ungrounded meta-commentary."""
+    from src.eval.deterministic_eval import evaluate_deterministic
+
+    script_with_meta = {
+        "title": "Meta Test",
+        "segments": [
+            {
+                "segment_id": "s0",
+                "text": "如果一个早已离世的挚友账号更新，你会选择点开还是当作恶作剧？今天深度解说这部电影。",
+            },
+            {
+                "segment_id": "s1",
+                "text": "导演巧妙地以生活流镜头铺展细节，快节奏的蒙太奇与视听交互让人叹服。",
+            },
+            {
+                "segment_id": "s2",
+                "text": "尖锐地刺破了现代社会的阴暗角落，留给观众的不仅是深层警醒。",
+            },
+        ],
+    }
+    metrics, dims, telemetry = evaluate_deterministic(script_with_meta)
+    assert len(metrics.meta_commentary_matches) >= 3
+    assert len(metrics.hard_failures) > 0
+    assert any("Excessive ungrounded viewer meta-commentary" in f for f in metrics.hard_failures)
+
+
+
 
 
 

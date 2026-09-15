@@ -98,6 +98,7 @@ class DeterministicMetrics(BaseModel):
     distinct_2_grams: float = 0.0
     distinct_3_grams: float = 0.0
     cliche_matches: list[str] = Field(default_factory=list)
+    meta_commentary_matches: list[str] = Field(default_factory=list)
     repeated_phrases: list[tuple[str, int]] = Field(default_factory=list)
     speaking_rate_chars_per_min: float = 0.0
     evidence_grounded_ratio: float = 0.0
