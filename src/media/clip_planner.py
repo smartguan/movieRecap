@@ -128,13 +128,19 @@ def plan_and_extract_clips(
             if 0.0 <= prop_st <= total_source_duration and not is_dup and not is_severe_loop and not is_repeated_proposal:
                 expected_phase = (prop_st - 40.0, prop_et + 40.0)
 
-        is_v3 = bool(script and script.get("version") == "v3")
+        is_spine_aligned = bool(
+            script
+            and str(script.get("version", "")).lower() not in ("v1", "v2")
+            and supporting
+            and isinstance(supporting, list)
+            and isinstance(supporting[0], dict)
+        )
         matched_scene_id = ""
         best_score = 1.0
 
-        if is_v3 and supporting and isinstance(supporting, list) and isinstance(supporting[0], dict):
+        if is_spine_aligned:
             chosen_start = float(supporting[0].get("start_seconds", 0.0))
-            matched_scene_id = asset.get("sequence_id", f"v3-seq-{i:03d}")
+            matched_scene_id = asset.get("sequence_id") or f"{script.get('version', 'v4')}-seq-{i:03d}"
         else:
             # Query semantic scene matcher for best content-matched candidate (V2)
             candidates = find_best_scenes(

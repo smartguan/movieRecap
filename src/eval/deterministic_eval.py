@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 ACTIVITY_DOMAINS: dict[str, dict[str, Any]] = {
     "dining_cooking": {
         "text_cues": ["做饭", "下厨", "烹饪", "晚餐", "晚饭", "午餐", "便当", "吃饭", "家常饭", "餐桌", "美食", "煮", "炒", "煎", "就餐", "享用午餐", "享用晚餐", "家常便饭"],
-        "scene_cues": ["食べる", "食べた", "料理", "ご飯", "めし", "できた", "いただきます", "サイコーン", "おいしい", "キッチン", "kitchen", "cook", "dining", "dinner", "lunch", "meal"],
+        "scene_cues": ["食べる", "食べた", "料理", "ご飯", "できた", "いただきます", "サイコーン", "おいしい", "キッチン", "食事", "朝食", "昼食", "夕食", "kitchen", "cook", "dining", "dinner", "lunch", "meal"],
         "conflicts_with": ["salon_haircut"],
     },
     "salon_haircut": {

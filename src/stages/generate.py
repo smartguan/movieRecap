@@ -112,7 +112,7 @@ def run_stage_generate(
     duration_ratio: float = 0.20,
     config: Optional[Dict[str, Any]] = None,
     force: bool = False,
-    algo_version: str = "v3",
+    algo_version: str = "v4",
 ) -> Stage3Result:
     """
     Execute Stage 3: Generate script, voiceover, video assembly, QA, and platform export.
@@ -125,14 +125,14 @@ def run_stage_generate(
         duration_ratio: Proportional duration ratio (default: 0.20 = 1/5).
         config: System configuration dict.
         force: If True, re-generate even if output exists.
-        algo_version: "v3" for video-first narrative spine, "v2" for script-first (A/B testing).
+        algo_version: "v4" for grounded narrative spine, "v3", "v2" for script-first (A/B testing).
 
     Returns:
         Stage3Result with platform package paths.
     """
     stage2_dir = _resolve_stage2_dir(stage2_input)
     slug = stage2_dir.name
-    version_suffix = f"_{algo_version.lower()}" if algo_version.lower() == "v3" else ""
+    version_suffix = f"_{algo_version.lower()}" if algo_version.lower() not in ("v1", "v2", "default") else ""
     stage_work_dir = (
         Path(stage3_dir) if stage3_dir else Path("data/stages/3_generated") / f"{slug}{version_suffix}"
     )
@@ -230,7 +230,7 @@ def run_stage_generate(
             script_dict = {
                 "title": movie_title,
                 "project_id": slug,
-                "version": "v3",
+                "version": algo_version.lower(),
                 "segments": script_segments,
                 "target_speaking_rate": 240.0,
                 "target_range_minutes": duration_range,

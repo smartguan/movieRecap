@@ -53,6 +53,11 @@ def main() -> int:
         help="Base directory for platform-ready packages (default: output)",
     )
     parser.add_argument(
+        "--algo-version",
+        default="v4",
+        help="Algorithm version ('v4' for grounded narrative spine, 'v3', 'v2')",
+    )
+    parser.add_argument(
         "--force",
         action="store_true",
         help="Force re-generation of script and renders",
@@ -76,6 +81,7 @@ def main() -> int:
             target_duration=args.target_duration,
             duration_ratio=args.duration_ratio,
             force=args.force,
+            algo_version=args.algo_version,
         )
 
         print("\n✅ Stage 3 Complete!")
