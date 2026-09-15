@@ -662,6 +662,55 @@ class LLMGateway:
                 "overall_quality_score": 0.94
             }, ensure_ascii=False)
 
+        elif task_name == "anti_slop_evaluation":
+            # Deterministic surrogate scoring for mock/offline execution
+            import re
+            context = prompt
+            lines = [l.strip() for l in context.splitlines() if l.strip().startswith("[")]
+            sents = []
+            for l in lines:
+                parts = [p.strip() for p in re.split(r'[。！？\n]', l) if len(p.strip()) >= 12]
+                sents.extend(parts)
+            dup_count = len(sents) - len(set(sents))
+
+            cliche_count = 0
+            for cl in ["不得不说", "究竟会发生什么", "让我们拭目以待", "总的来说", "脆弱的平衡分崩离析", "命运的齿轮"]:
+                if cl in context:
+                    cliche_count += 1
+
+            if dup_count >= 3 or cliche_count >= 2:
+                depth = 48.0
+                hook = 55.0
+                voice = 50.0
+                resonance = 45.0
+                slop_inds = [f"Detected {dup_count} duplicate sentences", f"Detected {cliche_count} AI slop clichés"]
+                verdict = "Failed: Script contains repetitive AI slop boilerplate and duplicate sentences"
+            elif dup_count > 0 or cliche_count > 0:
+                depth = max(55.0, 80.0 - dup_count * 10.0 - cliche_count * 8.0)
+                hook = 75.0
+                voice = 72.0
+                resonance = 70.0
+                slop_inds = [f"Detected {dup_count} duplicate sentences", f"Detected {cliche_count} AI clichés"]
+                verdict = "Mediocre: Script exhibits repetitive phrasing and generic filler"
+            else:
+                depth = 92.0
+                hook = 94.0
+                voice = 91.0
+                resonance = 89.0
+                slop_inds = []
+                verdict = "High quality commentary with strong analytical perspective"
+
+            content = json.dumps({
+                "commentary_depth_score": depth,
+                "hook_engagement_score": hook,
+                "narrative_voice_score": voice,
+                "emotional_resonance_score": resonance,
+                "slop_indicators_detected": slop_inds,
+                "editorial_highlights": ["Thoughtful thematic deconstruction"] if not slop_inds else [],
+                "improvement_recommendations": slop_inds,
+                "summary_verdict": verdict,
+            }, ensure_ascii=False)
+
         elif task_name == "synthesize_grounded_narration":
             # Signal caller to use sequence-grounded deterministic synthesizer
             content = json.dumps({"text": ""}, ensure_ascii=False)

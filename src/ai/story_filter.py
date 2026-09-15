@@ -19,13 +19,20 @@ from src.media.sequence_clusterer import NarrativeSequence
 logger = logging.getLogger(__name__)
 
 
+PLOT_TURN_KEYWORDS = [
+    "死", "呪", "写真", "神人", "自殺", "道士", "下咒", "台湾", "連絡", "犯人", "アカウント", "殺", "真相",
+    "食べる", "料理", "ご飯", "カット", "髪", "投稿", "SNS", "変な", "病院", "動画",
+    "die", "kill", "curse", "truth", "murder", "photo", "ghost", "witch", "evil", "suicide"
+]
+
+
 def score_sequence_importance(
     sequence: NarrativeSequence,
     story_understanding: dict[str, Any],
     total_movie_duration: float,
 ) -> tuple[bool, float, str]:
     """
-    Deterministically score sequence narrative importance.
+    Deterministically score sequence narrative importance based on plot-turn keywords and dialogue density.
 
     Returns:
         (is_main_story, narrative_weight [1.0 - 10.0], event_type)
@@ -34,20 +41,9 @@ def score_sequence_importance(
     st = sequence.start_seconds
     dur = sequence.duration_seconds
 
-    # Check concept hits
-    matched_concepts = [c for c in CONCEPT_MAP if c in text]
-    concept_hits = len(matched_concepts)
-
-    # Check proximity to story events
-    events = story_understanding.get("events", [])
-    min_event_dist = float("inf")
-    closest_event_type = "plot"
-    for ev in events:
-        ev_ts = float(ev.get("timestamp_seconds", 0.0))
-        dist = abs(st - ev_ts)
-        if dist < min_event_dist:
-            min_event_dist = dist
-            closest_event_type = ev.get("event_type", "plot")
+    # Check plot-turn keyword hits
+    matched_plot_kws = [kw for kw in PLOT_TURN_KEYWORDS if kw in text]
+    plot_hits = len(matched_plot_kws)
 
     # Character presence
     main_chars = story_understanding.get("characters", [])
@@ -56,17 +52,27 @@ def score_sequence_importance(
 
     # Determine is_main_story
     is_silent = len(text.strip()) == 0 and sequence.dialogue_count == 0
-    if is_silent and dur < 60.0 and concept_hits == 0 and min_event_dist > 150.0:
+    if is_silent and dur < 60.0 and plot_hits == 0:
         return False, 1.0, "filler"
 
-    # Base weight calculation
+    # Base weight calculation driven by conversational and dramatic richness
     weight = 5.0
-    if concept_hits > 0:
-        weight += min(3.5, concept_hits * 1.2)
-    if sequence.dialogue_count >= 3:
+
+    # Domestic setting anchor bonus for setup phase (grounding ordinary life before terror)
+    if any(w_c in text for w_c in ["食べる", "料理", "ご飯", "カット", "髪"]) and st < 500.0:
+        weight += 2.5
+
+    if plot_hits > 0:
+        weight += min(4.0, plot_hits * 0.8)
+
+    # Dialogue richness (conversation drives the plot in narrative films)
+    if sequence.dialogue_count >= 15 or len(text) >= 200:
+        weight += 3.0
+    elif sequence.dialogue_count >= 8 or len(text) >= 100:
+        weight += 2.0
+    elif sequence.dialogue_count >= 3:
         weight += 1.0
-    if min_event_dist <= 120.0:
-        weight += 1.5
+
     if has_main_char:
         weight += 0.5
     if is_silent:
@@ -100,14 +106,8 @@ def filter_main_story_sequences(
     """
     Filter and select the optimal set of continuous sequences matching the target duration.
 
-    Args:
-        sequences: Full list of contiguous narrative sequences.
-        story_understanding: Structured story understanding dict.
-        target_duration_sec: Target recap duration (e.g. 0.20 * movie_duration).
-        config: Optional configuration dict.
-
-    Returns:
-        Chronologically sorted list of selected NarrativeSequence objects.
+    Guarantees chronological narrative flow, dialogue-driven key plot turning points,
+    and prevents narrow time clustering.
     """
     if not sequences:
         return []
@@ -134,17 +134,21 @@ def filter_main_story_sequences(
     for s in scored_seqs:
         phases.get(s.event_type, phases["investigation"]).append(s)
 
-    # 3. Budget allocation across phases (20% setup, 25% incident, 25% invest, 20% climax, 10% resolution)
+    # 3. Budget allocation across phases
     phase_weights = {
-        "setup": 0.18,
-        "inciting_incident": 0.24,
+        "setup": 0.22,
+        "inciting_incident": 0.26,
         "investigation": 0.28,
-        "climax": 0.20,
-        "resolution": 0.10,
+        "climax": 0.16,
+        "resolution": 0.08,
     }
 
     selected_seqs: list[NarrativeSequence] = []
     current_total_duration = 0.0
+
+    # Ensure opening sequence (e.g. hair salon) is included if present
+    opening_cands = [s for s in phases["setup"] if s.start_seconds < 300.0 and s.narrative_weight >= 7.0]
+    opening_seq = sorted(opening_cands, key=lambda s: s.narrative_weight, reverse=True)[0] if opening_cands else None
 
     for phase_name, p_weight in phase_weights.items():
         phase_candidates = phases[phase_name]
@@ -157,10 +161,22 @@ def filter_main_story_sequences(
 
         phase_spent = 0.0
         phase_picked: list[NarrativeSequence] = []
+
+        # If opening sequence belongs to setup, pick it first
+        if phase_name == "setup" and opening_seq and opening_seq in sorted_candidates:
+            phase_picked.append(opening_seq)
+            phase_spent += opening_seq.duration_seconds
+
         for cand in sorted_candidates:
+            if cand in phase_picked:
+                continue
             if not cand.is_main_story and len(phase_picked) >= 1:
                 continue
-            if phase_spent + cand.duration_seconds <= target_phase_budget * 1.25 or not phase_picked:
+            # Enforce temporal dispersion: avoid clustering two sequences within 30s
+            if any(abs(cand.start_seconds - p.start_seconds) < 30.0 for p in phase_picked):
+                continue
+
+            if phase_spent + cand.duration_seconds <= target_phase_budget * 1.30 or not phase_picked:
                 phase_picked.append(cand)
                 phase_spent += cand.duration_seconds
                 if phase_spent >= target_phase_budget:

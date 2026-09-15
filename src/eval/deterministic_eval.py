@@ -59,7 +59,22 @@ ACTIVITY_DOMAINS: dict[str, dict[str, Any]] = {
     "combat_horror": {
         "text_cues": ["搏杀", "打斗", "厉鬼", "怨灵", "火海", "焚毁", "点燃", "打火机", "尖叫", "惨死", "自尽", "血泊", "凶煞", "大殿崩塌"],
         "scene_cues": ["殺", "死", "火", "燃", "ライター", "幽霊", "怨霊", "怖い", "怪奇", "fight", "ghost", "flame", "corpse"],
-        "conflicts_with": ["salon_haircut"],
+        "conflicts_with": ["salon_haircut", "dining_cooking", "hospital_medical"],
+    },
+    "hospital_medical": {
+        "text_cues": ["医院", "医生", "生理指标", "化验", "专科医院", "病理原因", "病因", "检查", "诊断", "医学"],
+        "scene_cues": ["検査", "病院", "原因", "医者", "病気", "推薦", "hospital", "doctor", "medical"],
+        "conflicts_with": ["salon_haircut", "dining_cooking", "combat_horror"],
+    },
+    "stalking_apparition": {
+        "text_cues": ["如影随形", "床边", "独自沐浴", "阴冷的视线", "恶灵缠身", "诡异女子", "诡异女人", "梦魇"],
+        "scene_cues": ["変な女", "突きまとって", "横にいる", "お風呂", "後ろに", "寝てても", "目が覚め", "ghost", "stalk"],
+        "conflicts_with": ["dining_cooking", "salon_haircut"],
+    },
+    "suicide_tragedy": {
+        "text_cues": ["自尽", "惨死在血泊", "自杀", "割腕", "跳楼", "死状", "自戕"],
+        "scene_cues": ["自殺", "殺した", "死んじゃって", "suicide", "corpse"],
+        "conflicts_with": ["dining_cooking", "salon_haircut"],
     },
 }
 
@@ -211,10 +226,10 @@ TRANSITION_MARKERS: list[str] = [
     "为了弄清", "为了查明", "为了斩断", "为了救", "为了找到", "在惨烈", "在噩梦",
     # Spatial & journey movements
     "来到", "赶往", "孤身前往", "驱车", "跨海", "深入", "穿行于", "回到", "进入", "踏入",
-    "走出", "启程", "奔赴", "飞往", "前往",
+    "走出", "启程", "奔赴", "飞往", "前往", "跨越", "降落", "飞赴", "穿行", "飞机",
     # Dramatic phase and narrative bridges
     "随着调查深入", "惨烈搏杀过后", "未等众人喘息", "尘埃落定", "生死一线之际",
-    "随着真相浮出水面", "在真相大白之后", "回顾",
+    "随着真相浮出水面", "在真相大白之后", "回顾", "面对", "日以继夜", "惨剧发生之后", "悲剧发生后",
 ]
 
 
@@ -377,23 +392,45 @@ def calculate_storyteller_continuity(
     else:
         visual_spine_contiguity_score = 100.0
 
+    # 5b. Repetitive Duplicate Sentence Detection across Segments
+    import re
+    all_sentences: list[tuple[int, str]] = []
+    for i, seg in enumerate(segments):
+        t = seg.get("text", "")
+        parts = [p.strip() for p in re.split(r'[。！？\n]', t) if len(p.strip()) >= 12]
+        for p in parts:
+            all_sentences.append((i, p))
+
+    seen_sents: dict[str, list[int]] = {}
+    for seg_i, s_text in all_sentences:
+        seen_sents.setdefault(s_text, []).append(seg_i)
+
+    dup_sentences = {s: occs for s, occs in seen_sents.items() if len(set(occs)) > 1}
+    dup_sentence_penalty = min(50.0, len(dup_sentences) * 20.0)
+    if dup_sentences:
+        for s_text, occs in list(dup_sentences.items())[:3]:
+            discontinuity_events.append(
+                f"Repetitive duplicate sentence across segments {occs}: '{s_text[:30]}...'"
+            )
+
     # 6. Composite Narrative Continuity Score
-    continuity_score = round(
+    raw_continuity = (
         0.35 * temporal_monotonicity_score
         + 0.35 * (transition_coherence_ratio * 100.0)
         + 0.15 * (character_entity_thread_ratio * 100.0)
-        + 0.15 * visual_spine_contiguity_score,
-        1,
+        + 0.15 * visual_spine_contiguity_score
     )
+    continuity_score = round(max(0.0, raw_continuity - dup_sentence_penalty), 1)
 
-    passed = (continuity_score >= 70.0) and (backward_jumps == 0)
+    passed = (continuity_score >= 70.0) and (backward_jumps == 0) and (len(dup_sentences) == 0)
 
     details = (
         f"Continuity Score={continuity_score:.1f}/100 "
         f"(Monotonicity={temporal_monotonicity_score:.1f}%, "
         f"Transitions={transition_coherence_ratio * 100:.1f}%, "
         f"Entity Threading={character_entity_thread_ratio * 100:.1f}%, "
-        f"Spine Contiguity={visual_spine_contiguity_score:.1f}%)"
+        f"Spine Contiguity={visual_spine_contiguity_score:.1f}%, "
+        f"Duplicate Sents={len(dup_sentences)})"
     )
 
     metrics = StoryContinuityMetrics(

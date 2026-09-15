@@ -561,5 +561,79 @@ def test_slop_detector_blocks_grade_s_when_critical_dimension_fails():
     assert "FAILED" in report.summary_verdict
 
 
+def test_duplicate_sentence_detection_fails_continuity():
+    """Verify that repeating duplicate sentences across segments causes continuity failure."""
+    from src.eval.deterministic_eval import calculate_storyteller_continuity
+    duplicate_script_segments = [
+        {
+            "segment_id": "seg-00",
+            "text": "随着时间推移，暗处的危机已然扩散至全新的场景。突发事件的连环冲击使得原本脆弱的平衡分崩离析，人物被动卷入未知的漩涡。",
+            "supporting_scenes": [{"start_seconds": 10.0, "end_seconds": 60.0}],
+        },
+        {
+            "segment_id": "seg-01",
+            "text": "未等众人喘息，局势在周围悄然加剧。突发事件的连环冲击使得原本脆弱的平衡分崩离析，人物被动卷入未知的漩涡。",
+            "supporting_scenes": [{"start_seconds": 100.0, "end_seconds": 150.0}],
+        },
+    ]
+
+    metrics, dim = calculate_storyteller_continuity(duplicate_script_segments)
+    assert dim.passed is False
+    assert any("Repetitive duplicate sentence" in ev for ev in metrics.discontinuity_events)
+
+
+def test_hospital_medical_av_conflict():
+    """Verify that narrating combat/burning dolls over a hospital exam scene fails AV coupling."""
+    detector = SlopDetector()
+    script = {
+        "title": "Medical Test Movie",
+        "estimated_duration_minutes": 2.0,
+        "segments": [
+            {
+                "segment_id": "narration-000",
+                "text": "生死一线之际，手指终于触碰到了黑色母偶！烈焰腾空而起，将母偶连同滔天的怨念一同卷入熊熊火海，厉鬼惨死在烈焰中。",
+                "supporting_scenes": [{"start_seconds": 100.0, "end_seconds": 160.0}],
+            },
+        ],
+    }
+    scene_index = {
+        "scenes": [
+            {"scene_id": "s1", "start_seconds": 100.0, "end_seconds": 160.0, "transcript_text": "今回の検査では原因まで特定できませんでした。もっと大きな病院で詳しい検査が必要です。"},
+        ]
+    }
+    edit_decisions = [
+        {"segment_id": "narration-000", "source_start": 100.0, "source_end": 160.0, "duration": 60.0, "text": script["segments"][0]["text"]},
+    ]
+
+    report = detector.evaluate_script(
+        script=script,
+        scene_index=scene_index,
+        edit_decisions=edit_decisions,
+    )
+
+    av_dim = next((d for d in report.dimensions if d.name == "Cross-Modal Audio-Visual Coupling"), None)
+    assert av_dim is not None
+    assert av_dim.passed is False
+    assert any("hospital_medical" in f for f in av_dim.findings)
+
+
+def test_offline_eval_detects_slop_boilerplate():
+    """Verify that offline evaluation detects AI slop boilerplate and fails the script."""
+    detector = SlopDetector()
+    slop_script = {
+        "title": "Slop Test",
+        "segments": [
+            {"segment_id": "s0", "text": "在这个充满悬疑的世界中，不得不说，男主做出了一个选择。究竟会发生什么呢？让我们拭目以待。突发事件的连环冲击使得原本脆弱的平衡分崩离析。"},
+            {"segment_id": "s1", "text": "突发事件的连环冲击使得原本脆弱的平衡分崩离析。命运的齿轮已然无可逆转地开始转动。"},
+            {"segment_id": "s2", "text": "突发事件的连环冲击使得原本脆弱的平衡分崩离析。总的来说这是一部悬疑电影。"},
+        ],
+    }
+    report = detector.evaluate_script(script=slop_script)
+    assert report.passed is False
+    assert report.grade == EvalGrade.TIER_F
+    assert report.semantic.commentary_depth_score < 60.0
+
+
+
 
 
